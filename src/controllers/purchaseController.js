@@ -302,87 +302,11 @@ export const verifyAndAllocateQR = async (req, res) => {
 
     let allocatedQRs = [];
 
-    // 5. DIGITAL vs PHYSICAL ALLOCATION
-    if (isDigital) {
-      // Case A: DIGITAL PRODUCT -> INSTANT DIGITAL PASS ALLOCATION
-      const qrQuery = {
-        qrType: 'DIGITAL',
-        status: 'IN STOCK',
-        isDeleted: { $ne: true }
-      };
-
-      let inStockQR = await QRCode.findOne(qrQuery);
-
-      if (inStockQR) {
-        const targetProductId = inStockQR.productId;
-        await QRCode.updateMany(
-          { productId: targetProductId },
-          {
-            status: 'ACTIVE',
-            userId: user._id,
-            qrFor,
-            qrType: 'DIGITAL',
-            initialCalls: product?.initialCalls || 10,
-            initialMessages: product?.initialMessages || 20,
-            validityDays: product?.validityDays || 365,
-            renewalAmount: product?.renewalAmount || 199,
-            activationDate: new Date(),
-            expiryDate: new Date(Date.now() + (product?.validityDays || 365) * 86400000)
-          }
-        );
-        allocatedQRs = await QRCode.find({ productId: targetProductId });
-      } else {
-        // Auto-generate Digital E-QR on the fly
-        const nextNum = await calculateNextStartNumber();
-        const newProductId = `SD${String(nextNum).padStart(3, '0')}`;
-
-        const newBatchItems = [];
-        for (let c = 1; c <= copiesPerSet; c++) {
-          const copyCode = `${newProductId}C${c}`;
-          const publicToken = crypto.randomBytes(16).toString('hex');
-          newBatchItems.push({
-            productId: newProductId,
-            batchId: 'STORE-DIGITAL',
-            copyCode,
-            publicToken,
-            status: 'ACTIVE',
-            userId: user._id,
-            qrFor,
-            qrType: 'DIGITAL',
-            qrTypeId: qrTypeDoc?._id || null,
-            initialCalls: product?.initialCalls || 10,
-            initialMessages: product?.initialMessages || 20,
-            validityDays: product?.validityDays || 365,
-            renewalAmount: product?.renewalAmount || 199,
-            activationDate: new Date(),
-            expiryDate: new Date(Date.now() + (product?.validityDays || 365) * 86400000)
-          });
-        }
-        allocatedQRs = await QRCode.insertMany(newBatchItems);
-      }
-
-      // Initialize Quota Wallet for digital QR
-      for (const qr of allocatedQRs) {
-        await QuotaWallet.findOneAndUpdate(
-          { qrId: qr._id },
-          {
-            userId: user._id,
-            qrId: qr._id,
-            callBalance: product?.initialCalls || 10,
-            messageBalance: product?.initialMessages || 20,
-            totalCallsPurchased: product?.initialCalls || 10,
-            totalMessagesPurchased: product?.initialMessages || 20
-          },
-          { upsert: true, new: true }
-        );
-      }
-    } else {
-      // Case B: PHYSICAL PRODUCT
-      // In physical orders, the physical reflective sticker kit is shipped to the customer's delivery address.
-      // The physical QR stickers remain unassigned until the customer receives the parcel and scans the physical QR code
-      // to complete first-time vehicle registration (/api/public/qr/:token/register).
-      allocatedQRs = [];
-    }
+    // 5. ALLOCATION POLICY
+    // Online checkout ONLY creates the verified customer Order.
+    // QR codes are NOT activated here. Physical kits are delivered and activated by scanning the sticker,
+    // and Digital Passes are linked when the user submits their vehicle registration details.
+    allocatedQRs = [];
 
     // 6. Record Order in DB
     const orderDoc = await Order.create({
