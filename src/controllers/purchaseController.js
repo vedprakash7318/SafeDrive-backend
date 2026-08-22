@@ -187,9 +187,6 @@ export const createRazorpayOrder = async (req, res) => {
     res.status(500).json({ success: false, message: error.message || 'Could not create payment order.' });
   }
 };
-    res.status(500).json({ success: false, message: error.message || 'Failed to create payment order.' });
-  }
-};
 
 /**
  * 5. VERIFY PAYMENT & PROCESS DIGITAL (INSTANT ALLOCATION) vs PHYSICAL (ORDER CONFIRMATION)
