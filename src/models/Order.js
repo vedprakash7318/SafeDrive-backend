@@ -15,6 +15,8 @@ const orderSchema = new mongoose.Schema({
   pincode: { type: String },
   landmark: { type: String },
   amount: { type: Number, required: true },
+  quantity: { type: Number, default: 1, min: 1 },
+  unitPrice: { type: Number },
   paymentStatus: { type: String, enum: ['PAID', 'PENDING', 'FAILED'], default: 'PAID' },
   deliveryStatus: { type: String, enum: ['PROCESSING', 'DISPATCHED', 'SHIPPED', 'DELIVERED', 'CANCELLED'], default: 'PROCESSING' },
   courierPartner: { type: String, default: '' },

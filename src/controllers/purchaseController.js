@@ -134,16 +134,18 @@ export const verifyCheckoutOTP = async (req, res) => {
  */
 export const createRazorpayOrder = async (req, res) => {
   try {
-    const { productId } = req.body;
-    let amount = 299; // Fallback default in INR
+    const { productId, quantity: reqQuantity } = req.body;
+    const quantity = Math.max(1, parseInt(reqQuantity, 10) || 1);
+    let unitPrice = 299; // Fallback default in INR
 
     if (productId && productId !== 'default_car_kit' && productId !== 'default_bike_kit' && productId !== 'default_digital_kit') {
       const product = await Product.findById(productId);
       if (product && product.price) {
-        amount = product.price;
+        unitPrice = product.price;
       }
     }
 
+    const totalAmount = unitPrice * quantity;
     const razorpay = getRazorpayInstance();
 
     if (!razorpay) {
@@ -153,14 +155,16 @@ export const createRazorpayOrder = async (req, res) => {
         success: true,
         isSimulated: true,
         orderId: dummyOrderId,
-        amount: amount * 100, // paise
+        amount: totalAmount * 100, // paise
+        unitPrice,
+        quantity,
         currency: 'INR',
         keyId: 'rzp_test_simulation'
       });
     }
 
     const options = {
-      amount: Math.round(amount * 100), // paise
+      amount: Math.round(totalAmount * 100), // paise
       currency: 'INR',
       receipt: `rcpt_${Date.now()}`
     };
@@ -173,11 +177,16 @@ export const createRazorpayOrder = async (req, res) => {
       isLive: true,
       orderId: order.id,
       amount: order.amount,
+      unitPrice,
+      quantity,
       currency: order.currency,
       keyId: process.env.RAZORPAY_KEY_ID
     });
   } catch (error) {
     console.error('Razorpay order creation error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Could not create payment order.' });
+  }
+};
     res.status(500).json({ success: false, message: error.message || 'Failed to create payment order.' });
   }
 };
@@ -197,6 +206,7 @@ export const verifyAndAllocateQR = async (req, res) => {
       pincode,
       landmark,
       productId,
+      quantity: reqQuantity,
       razorpay_payment_id,
       razorpay_order_id,
       razorpay_signature
@@ -206,6 +216,7 @@ export const verifyAndAllocateQR = async (req, res) => {
       return res.status(400).json({ success: false, message: 'All contact and delivery details are required.' });
     }
 
+    const quantity = Math.max(1, parseInt(reqQuantity, 10) || 1);
     const cleanEmail = email.toLowerCase().trim();
     const cleanPhone = phone.trim();
     const cleanPincode = (pincode || '').trim();
@@ -288,7 +299,8 @@ export const verifyAndAllocateQR = async (req, res) => {
 
     const finalPaymentId = razorpay_payment_id || `pay_test_${Date.now()}`;
     const finalOrderId = razorpay_order_id || `order_${Date.now()}`;
-    const finalAmount = product ? product.price : 299;
+    const unitPrice = product ? product.price : 299;
+    const finalAmount = unitPrice * quantity;
     const generatedOrderNumber = `ORD-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
     let allocatedQRs = [];
@@ -391,6 +403,8 @@ export const verifyAndAllocateQR = async (req, res) => {
       pincode: cleanPincode,
       landmark: cleanLandmark,
       amount: finalAmount,
+      unitPrice,
+      quantity,
       paymentStatus: 'PAID',
       deliveryStatus: isDigital ? 'DELIVERED' : 'PROCESSING',
       orderNumber: generatedOrderNumber,
@@ -405,14 +419,16 @@ export const verifyAndAllocateQR = async (req, res) => {
         initialMessages: product?.initialMessages || 20,
         validityDays: product?.validityDays || 365,
         renewalAmount: product?.renewalAmount || 199,
-        copiesPerSet
+        copiesPerSet,
+        quantity,
+        unitPrice
       }
     });
 
     // 6.1 Update Product Sales & Accounting Metrics
     if (product && product._id) {
       await Product.findByIdAndUpdate(product._id, {
-        $inc: { soldCount: 1, totalRevenue: finalAmount }
+        $inc: { soldCount: quantity, totalRevenue: finalAmount }
       });
     }
 

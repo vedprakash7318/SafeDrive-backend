@@ -211,6 +211,7 @@ Verifies OTP and returns user data + JWT token *(Test OTP is `123456`)*.
 ```json
 {
   "productId": "66c7f8a1e2b4c3d4e5f6a7b8",
+  "quantity": 2,
   "name": "Rahul Sharma"
 }
 ```
@@ -219,7 +220,9 @@ Verifies OTP and returns user data + JWT token *(Test OTP is `123456`)*.
 {
   "success": true,
   "orderId": "order_OqX9abc123",
-  "amount": 29900,
+  "amount": 59800,
+  "unitPrice": 299,
+  "quantity": 2,
   "currency": "INR",
   "keyId": "rzp_test_6kz5nGEzi8uXRw"
 }
@@ -237,6 +240,7 @@ Verifies payment signature from Razorpay and places the delivery order.
 ```json
 {
   "productId": "66c7f8a1e2b4c3d4e5f6a7b8",
+  "quantity": 2,
   "name": "Rahul Sharma",
   "phone": "9876543210",
   "email": "rahul@example.com",
