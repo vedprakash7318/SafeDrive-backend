@@ -1,52 +1,48 @@
-# 🚗 Safe Drive - Complete Website REST API Documentation
+# 🌐 Safe Drive - Website Frontend REST API Reference
 
-> **Official Backend API Reference for Website & Mobile Developers**  
+> **Dedicated API Guide for Website Developers (Customer Website & Public Scanner)**  
 > **Live Production Base URL:** `https://safedrive-backend-phqx.onrender.com/api`  
 > **Local Base URL:** `http://localhost:5000/api`
 
 ---
 
-## 📑 Quick Navigation Index
+## 📑 Website Modules Index
 
-1. [Base Configuration & Auth Header](#1-base-configuration--headers)
-2. [Product & Store APIs (Catalog & Details)](#2-product--store-apis)
-3. [User Auth APIs (100% Mobile OTP)](#3-user-authentication-apis)
-4. [Checkout & Razorpay Payment APIs](#4-checkout--payment-apis)
-5. [Public QR Scan & Caller Features (No Auth)](#5-public-qr-scan--calling-apis)
-6. [First-Time QR Registration & Kit Activation](#6-first-time-qr-registration-api)
-7. [Customer Dashboard & Vehicle Management (Protected)](#7-customer-dashboard--vehicle-management-apis)
-8. [Setup / Postman Admin Creation](#8-admin-setup-endpoint)
+1. [🛍️ Product & Store APIs (Shop)](#1-product--store-apis)
+2. [🔐 User Authentication (Mobile OTP)](#2-user-authentication-apis)
+3. [💳 Checkout & Razorpay Payment](#3-checkout--payment-apis)
+4. [📷 Public QR Scan & Safety Features](#4-public-qr-scan--safety-features)
+5. [📝 First-Time QR Registration (Kit Activation)](#5-first-time-qr-registration-api)
+6. [📊 Customer Dashboard & Vehicle Management](#6-customer-dashboard--vehicle-management)
 
 ---
 
-## 1. Base Configuration & Headers
-
-- **Content-Type:** `application/json` (unless uploading file/multipart)
-- **Protected Routes Header:**
+## 🔐 Authentication Header
+For all user dashboard & profile endpoints, include the JWT token in headers:
 ```http
-Authorization: Bearer <JWT_TOKEN_HERE>
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
 ```
 
 ---
 
-## 2. Product & Store APIs
+## 1. Product & Store APIs
 
-### 2.1 Get All Store Products
-Fetch all active products (physical sticker kits, digital passes) to render on the website Store/Shop page.
+### 1.1 Get All Products (Store Catalog)
+List all products and sticker kits on the website shop page.
 - **Method:** `GET`
 - **URL:** `/purchase/products`
-- **Auth Required:** No
+- **Auth:** No
 
 #### ✅ Response (`200 OK`):
 ```json
 {
   "success": true,
-  "count": 2,
   "products": [
     {
       "_id": "66c7f8a1e2b4c3d4e5f6a7b8",
       "title": "Car Safety QR Protection Kit (2 Stickers)",
-      "description": "Premium waterproof reflective QR stickers for front and rear vehicle glass.",
+      "description": "Reflective waterproof QR stickers for vehicle windshield and rear glass.",
       "imageUrl": "https://res.cloudinary.com/.../car-kit.webp",
       "qrType": "PHYSICAL",
       "price": 299,
@@ -57,12 +53,11 @@ Fetch all active products (physical sticker kits, digital passes) to render on t
       "validityDays": 365,
       "renewalAmount": 199,
       "features": [
-        "Instant Masked Voice Calling to Owner",
-        "WhatsApp Direct Emergency Alert",
-        "2 Reflective Waterproof Stickers",
-        "1-Year Free Validity Included"
-      ],
-      "isActive": true
+        "Instant Masked Voice Calling",
+        "WhatsApp Direct Alert",
+        "2 Reflective Stickers",
+        "1-Year Validity Included"
+      ]
     }
   ]
 }
@@ -70,11 +65,11 @@ Fetch all active products (physical sticker kits, digital passes) to render on t
 
 ---
 
-### 2.2 Get Single Product Details (By Product ID)
-Fetch full product details to render on individual product page (`/product/:id`).
+### 1.2 Get Single Product Details
+Fetch details for an individual product page (`/product/:id`).
 - **Method:** `GET`
 - **URL:** `/purchase/products/:id`
-- **Auth Required:** No
+- **Auth:** No
 
 #### ✅ Response (`200 OK`):
 ```json
@@ -83,7 +78,7 @@ Fetch full product details to render on individual product page (`/product/:id`)
   "product": {
     "_id": "66c7f8a1e2b4c3d4e5f6a7b8",
     "title": "Car Safety QR Protection Kit (2 Stickers)",
-    "description": "Premium waterproof reflective QR stickers for front and rear vehicle glass.",
+    "description": "Reflective waterproof QR stickers for vehicle windshield and rear glass.",
     "imageUrl": "https://res.cloudinary.com/.../car-kit.webp",
     "qrType": "PHYSICAL",
     "price": 299,
@@ -94,10 +89,10 @@ Fetch full product details to render on individual product page (`/product/:id`)
     "validityDays": 365,
     "renewalAmount": 199,
     "features": [
-      "Instant Masked Voice Calling to Owner",
-      "WhatsApp Direct Emergency Alert",
-      "2 Reflective Waterproof Stickers",
-      "1-Year Free Validity Included"
+      "Instant Masked Voice Calling",
+      "WhatsApp Direct Alert",
+      "2 Reflective Stickers",
+      "1-Year Validity Included"
     ]
   }
 }
@@ -105,13 +100,13 @@ Fetch full product details to render on individual product page (`/product/:id`)
 
 ---
 
-## 3. User Authentication APIs
+## 2. User Authentication APIs
 
-### 3.1 Send Mobile Login OTP
-Sends a 6-digit OTP to user's 10-digit Indian mobile number.
+### 2.1 Send Mobile Login OTP
+Sends a 6-digit OTP to user's 10-digit mobile number.
 - **Method:** `POST`
 - **URL:** `/auth/send-login-otp`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -123,18 +118,17 @@ Sends a 6-digit OTP to user's 10-digit Indian mobile number.
 ```json
 {
   "success": true,
-  "message": "OTP sent successfully to +91 9876543210",
-  "phone": "9876543210"
+  "message": "OTP sent successfully to +91 9876543210"
 }
 ```
 
 ---
 
-### 3.2 Verify Mobile Login OTP & Get Token
-Verifies OTP and generates user authentication JWT token. *(Test OTP is `123456`)*.
+### 2.2 Verify OTP & Login
+Verifies OTP and returns user data + JWT token *(Test OTP is `123456`)*.
 - **Method:** `POST`
 - **URL:** `/auth/verify-login-otp`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -150,7 +144,7 @@ Verifies OTP and generates user authentication JWT token. *(Test OTP is `123456`
   "message": "Login successful",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
-    "_id": "66c7f8a1e2b4c3d4e5f6a7b8",
+    "_id": "66c7...",
     "name": "Rahul Sharma",
     "phone": "9876543210",
     "email": "rahul@example.com",
@@ -161,38 +155,37 @@ Verifies OTP and generates user authentication JWT token. *(Test OTP is `123456`
 
 ---
 
-### 3.3 Get Current Logged-In User Profile
+### 2.3 Get Current User Profile
 - **Method:** `GET`
 - **URL:** `/auth/me`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### ✅ Response (`200 OK`):
 ```json
 {
   "success": true,
   "user": {
-    "_id": "66c7f8a1e2b4c3d4e5f6a7b8",
+    "_id": "66c7...",
     "name": "Rahul Sharma",
     "phone": "9876543210",
     "email": "rahul@example.com",
-    "address": "B-12, Model Town, Jaipur",
-    "role": "USER"
+    "address": "B-12, Model Town, Jaipur"
   }
 }
 ```
 
 ---
 
-### 3.4 Update User Profile
+### 2.4 Update User Profile
 - **Method:** `PUT`
 - **URL:** `/user/profile`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### Request Body:
 ```json
 {
   "name": "Rahul Sharma",
-  "email": "rahul.updated@example.com",
+  "email": "rahul@example.com",
   "whatsappNumber": "9876543210",
   "address": "Plot 55, Mansarovar, Jaipur - 302020"
 }
@@ -201,25 +194,18 @@ Verifies OTP and generates user authentication JWT token. *(Test OTP is `123456`
 ```json
 {
   "success": true,
-  "message": "Profile updated successfully",
-  "user": {
-    "name": "Rahul Sharma",
-    "phone": "9876543210",
-    "email": "rahul.updated@example.com",
-    "address": "Plot 55, Mansarovar, Jaipur - 302020"
-  }
+  "message": "Profile updated successfully"
 }
 ```
 
 ---
 
-## 4. Checkout & Payment APIs
+## 3. Checkout & Payment APIs
 
-### 4.1 Create Razorpay Order
-Generates an online order for payment processing.
+### 3.1 Create Razorpay Order
 - **Method:** `POST`
 - **URL:** `/purchase/create-order`
-- **Auth Required:** No (Guest or Logged-in user)
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -241,11 +227,11 @@ Generates an online order for payment processing.
 
 ---
 
-### 4.2 Complete Purchase & Place Order
-Verifies payment signature from Razorpay and provisions the order.
+### 3.2 Complete Purchase & Place Order
+Verifies payment signature from Razorpay and places the delivery order.
 - **Method:** `POST`
 - **URL:** `/purchase/complete`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -279,28 +265,27 @@ Verifies payment signature from Razorpay and provisions the order.
 
 ---
 
-## 5. Public QR Scan & Calling APIs (No Auth Required)
+## 4. Public QR Scan & Safety Features
 
-When a passerby scans the QR code on a vehicle (e.g. `https://website.com/scan/pk_live_sd001c1`):
+When a passerby scans the vehicle sticker (e.g. `https://website.com/q/pk_live_sd001c1`):
 
-### 5.1 Lookup Scanned QR by Token
+### 4.1 Lookup Scanned QR Code
 - **Method:** `GET`
 - **URL:** `/public/qr/:token`
-- **Auth Required:** No
+- **Auth:** No
 
-#### ✅ A. If QR is NOT Registered Yet (New Physical Sticker):
+#### ✅ A. If QR is UNREGISTERED (First-Time Registration Needed):
 ```json
 {
   "success": true,
   "status": "UNREGISTERED",
   "productId": "SD001",
   "copyCode": "SD001C1",
-  "qrFor": "Car",
-  "message": "This QR is ready for registration"
+  "qrFor": "Car"
 }
 ```
 
-#### ✅ B. If QR is ACTIVE (Protected Vehicle):
+#### ✅ B. If QR is ACTIVE (Protected Vehicle Scanned):
 ```json
 {
   "success": true,
@@ -313,11 +298,10 @@ When a passerby scans the QR code on a vehicle (e.g. `https://website.com/scan/p
 
 ---
 
-### 5.2 Get Public Scan Reasons List
-Fetch predefined alert reasons configured by admin.
+### 4.2 Get Alert Reasons List
 - **Method:** `GET`
 - **URL:** `/public/scan-reasons`
-- **Auth Required:** No
+- **Auth:** No
 
 #### ✅ Response (`200 OK`):
 ```json
@@ -334,11 +318,11 @@ Fetch predefined alert reasons configured by admin.
 
 ---
 
-### 5.3 Verify Last 4 Digits of Vehicle Plate
-Caller enters last 4 digits (e.g. `2024` for `RJ14-AB-2024`) to unlock masked call/message buttons.
+### 4.3 Verify Last 4 Digits of Number Plate
+Caller enters last 4 digits (e.g. `2024` for `RJ14-AB-2024`) to unlock call & message buttons.
 - **Method:** `POST`
 - **URL:** `/public/qr/:token/verify-plate`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -353,7 +337,6 @@ Caller enters last 4 digits (e.g. `2024` for `RJ14-AB-2024`) to unlock masked ca
   "verified": true,
   "vehicleBrand": "Hyundai",
   "vehicleName": "Creta",
-  "maskedPhone": "XXXXXX3210",
   "canCall": true,
   "canMessage": true
 }
@@ -361,10 +344,11 @@ Caller enters last 4 digits (e.g. `2024` for `RJ14-AB-2024`) to unlock masked ca
 
 ---
 
-### 5.4 Initiate Masked Voice Call
+### 4.4 Initiate Masked Call to Owner
+Connects call without exposing owner's private phone number.
 - **Method:** `POST`
 - **URL:** `/public/qr/:token/call`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -385,10 +369,10 @@ Caller enters last 4 digits (e.g. `2024` for `RJ14-AB-2024`) to unlock masked ca
 
 ---
 
-### 5.5 Send WhatsApp / SMS Alert
+### 4.5 Send WhatsApp / SMS Alert
 - **Method:** `POST`
 - **URL:** `/public/qr/:token/message`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -402,17 +386,17 @@ Caller enters last 4 digits (e.g. `2024` for `RJ14-AB-2024`) to unlock masked ca
 {
   "success": true,
   "whatsappUrl": "https://wa.me/919876543210?text=SafeDrive%20Alert%3A%20Your%20vehicle...",
-  "message": "Message alert dispatched"
+  "message": "Message dispatched"
 }
 ```
 
 ---
 
-### 5.6 Trigger Emergency SOS to Family
-Broadcasts emergency alert to the 2 emergency contacts configured on the vehicle.
+### 4.6 Trigger Emergency SOS Alert
+Broadcasts SOS emergency message to 2 emergency contacts configured on the vehicle.
 - **Method:** `POST`
 - **URL:** `/public/qr/:token/emergency`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -431,14 +415,14 @@ Broadcasts emergency alert to the 2 emergency contacts configured on the vehicle
 
 ---
 
-## 6. First-Time QR Registration API
+## 5. First-Time QR Registration API
 
-When a customer gets their physical stickers delivered, they scan the sticker and activate their vehicle.
+When a customer receives their physical stickers, they scan and register their vehicle.
 
-### 6.1 Register & Activate Physical QR Kit
+### 5.1 Register & Activate Sticker Kit
 - **Method:** `POST`
 - **URL:** `/public/qr/:token/register`
-- **Auth Required:** No
+- **Auth:** No
 
 #### Request Body:
 ```json
@@ -462,10 +446,6 @@ When a customer gets their physical stickers delivered, they scan the sticker an
   "success": true,
   "message": "QR Kit activated successfully! Your vehicle is now protected.",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "name": "Rahul Sharma",
-    "phone": "9876543210"
-  },
   "kit": {
     "productId": "SD001",
     "vehicleNumber": "RJ14AB2024",
@@ -479,13 +459,12 @@ When a customer gets their physical stickers delivered, they scan the sticker an
 
 ---
 
-## 7. Customer Dashboard & Vehicle Management APIs
+## 6. Customer Dashboard & Vehicle Management
 
-### 7.1 Get User Dashboard (My Vehicles & Balances)
-Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and remaining call/SMS balances.
+### 6.1 Get User Dashboard (My Vehicles & Balances)
 - **Method:** `GET`
 - **URL:** `/user/dashboard`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### ✅ Response (`200 OK`):
 ```json
@@ -504,7 +483,6 @@ Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and r
         { "copyCode": "SD001C2", "publicToken": "pk_live_sd001c2" }
       ],
       "vehicle": {
-        "_id": "66c7...",
         "vehicleNumber": "RJ14AB2024",
         "vehicleBrand": "Hyundai",
         "vehicleName": "Creta",
@@ -515,9 +493,7 @@ Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and r
       },
       "wallet": {
         "callBalance": 10,
-        "messageBalance": 20,
-        "totalCallsUsed": 0,
-        "totalMessagesUsed": 0
+        "messageBalance": 20
       },
       "expiryDate": "2027-08-22T00:00:00.000Z"
     }
@@ -532,10 +508,10 @@ Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and r
 
 ---
 
-### 7.2 Get Available Add-On Packages
+### 6.2 Get Available Add-On Packages
 - **Method:** `GET`
 - **URL:** `/user/packages`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### ✅ Response (`200 OK`):
 ```json
@@ -562,10 +538,10 @@ Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and r
 
 ---
 
-### 7.3 Buy Extra Add-On Quota (Top-Up Balance)
+### 6.3 Buy Extra Add-On Quota (Top-Up Balance)
 - **Method:** `POST`
 - **URL:** `/user/quota/buy`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### Request Body:
 ```json
@@ -574,7 +550,7 @@ Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and r
   "category": "CALL",
   "quantity": 50,
   "amountPaid": 99,
-  "paymentId": "pay_mock_123456"
+  "paymentId": "pay_123456"
 }
 ```
 #### ✅ Response (`200 OK`):
@@ -591,18 +567,17 @@ Fetch user's activated kits, sticker copies (`C1`, `C2`), vehicle details, and r
 
 ---
 
-### 7.4 Renew Annual Kit Subscription
-Extends vehicle validity by 365 days and adds renewal bonus quota.
+### 6.4 Renew Annual Kit Subscription
 - **Method:** `POST`
 - **URL:** `/user/subscription/renew`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### Request Body:
 ```json
 {
   "qrId": "66c7f8a1e2b4c3d4e5f6a7b8",
   "paymentAmount": 199,
-  "paymentId": "pay_mock_999999"
+  "paymentId": "pay_999999"
 }
 ```
 #### ✅ Response (`200 OK`):
@@ -616,10 +591,10 @@ Extends vehicle validity by 365 days and adds renewal bonus quota.
 
 ---
 
-### 7.5 Update Emergency Contacts
+### 6.5 Update Emergency Contacts
 - **Method:** `PUT`
 - **URL:** `/user/emergency-contacts`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### Request Body:
 ```json
@@ -641,37 +616,10 @@ Extends vehicle validity by 365 days and adds renewal bonus quota.
 
 ---
 
-### 7.6 Get Customer Quota & Usage Ledger
-- **Method:** `GET`
-- **URL:** `/user/ledger`
-- **Auth Required:** Yes (`Bearer <token>`)
-
-#### ✅ Response (`200 OK`):
-```json
-{
-  "success": true,
-  "ledger": [
-    {
-      "_id": "66c7...",
-      "productId": "SD001",
-      "type": "CREDIT",
-      "category": "CALL",
-      "quantity": 10,
-      "balanceAfter": 10,
-      "source": "INITIAL_FREE",
-      "reason": "Initial Starter Calling Quota (Included with Kit)",
-      "createdAt": "2026-08-22T10:00:00.000Z"
-    }
-  ]
-}
-```
-
----
-
-### 7.7 Get Customer Orders History
+### 6.6 Get Customer Orders History
 - **Method:** `GET`
 - **URL:** `/user/orders`
-- **Auth Required:** Yes (`Bearer <token>`)
+- **Auth:** Yes (`Bearer <token>`)
 
 #### ✅ Response (`200 OK`):
 ```json
@@ -695,38 +643,4 @@ Extends vehicle validity by 365 days and adds renewal bonus quota.
 
 ---
 
-## 8. Admin Setup Endpoint
-
-### 8.1 Create / Reset Admin Account (Postman)
-- **Method:** `POST`
-- **URL:** `/auth/create-admin`
-- **Auth Required:** No
-
-#### Request Body:
-```json
-{
-  "name": "Super Admin",
-  "phone": "9999999999",
-  "email": "admin@safedrive.com",
-  "password": "adminpassword123",
-  "role": "SUPER_ADMIN"
-}
-```
-#### ✅ Response (`201 Created` / `200 OK`):
-```json
-{
-  "success": true,
-  "message": "Admin account created successfully!",
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "admin": {
-    "name": "Super Admin",
-    "phone": "9999999999",
-    "email": "admin@safedrive.com",
-    "role": "SUPER_ADMIN"
-  }
-}
-```
-
----
-
-*Safe Drive QR Vehicle Safety & Protection Backend API Documentation.*
+*Safe Drive Customer Website & Scanner API Reference.*
