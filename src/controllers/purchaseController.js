@@ -435,19 +435,21 @@ export const verifyAndAllocateQR = async (req, res) => {
       }
     });
 
-    // 8. Send Purchase Confirmation Email
-    await sendPurchaseConfirmationEmail(
-      cleanEmail,
-      user,
-      {
-        orderId: generatedOrderNumber,
-        productName,
-        amount: finalAmount,
-        copiesPerSet: isDigital ? allocatedQRs.length : copiesPerSet,
-        isDigital
-      },
-      allocatedQRs
-    );
+    // 8. Send Purchase Confirmation Email in Background (Non-blocking for instant response)
+    if (cleanEmail && cleanEmail.includes('@')) {
+      sendPurchaseConfirmationEmail(
+        cleanEmail,
+        user,
+        {
+          orderId: generatedOrderNumber,
+          productName,
+          amount: finalAmount,
+          copiesPerSet: isDigital ? allocatedQRs.length : copiesPerSet,
+          isDigital
+        },
+        allocatedQRs
+      ).catch((err) => console.error('Email dispatch error (non-fatal):', err.message));
+    }
 
     // 9. Generate JWT Auth Token for Instant Auto-Login
     const token = jwt.sign(
