@@ -5,25 +5,15 @@ import Subscription from '../models/Subscription.js';
 import QuotaWallet from '../models/QuotaWallet.js';
 import QuotaTransaction from '../models/QuotaTransaction.js';
 import EmergencyAlert from '../models/EmergencyAlert.js';
+import ScanLog from '../models/ScanLog.js';
 import SystemSetting from '../models/SystemSetting.js';
 import ScanReason from '../models/ScanReason.js';
+import Order from '../models/Order.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
-const DEFAULT_REASONS = [
-  { title: 'Wrong parking', iconKey: 'ban', color: 'red', isOtherType: false, order: 1 },
-  { title: 'Window or gate unlocked', iconKey: 'unlock', color: 'green', isOtherType: false, order: 2 },
-  { title: 'Car is going', iconKey: 'car', color: 'blue', isOtherType: false, order: 3 },
-  { title: 'Accident', iconKey: 'alert', color: 'rose', isOtherType: false, order: 4 },
-  { title: 'Other (Please specify)', iconKey: 'other', color: 'purple', isOtherType: true, order: 5 }
-];
-
 export const getPublicScanReasons = async (req, res) => {
   try {
-    const totalEver = await ScanReason.countDocuments();
-    if (totalEver === 0) {
-      await ScanReason.insertMany(DEFAULT_REASONS);
-    }
     const reasons = await ScanReason.find({ isActive: true, isDeleted: { $ne: true } }).sort({ order: 1, createdAt: 1 });
     res.json({ success: true, reasons });
   } catch (error) {
@@ -35,8 +25,12 @@ export const getQRInfoByToken = async (req, res) => {
   try {
     const { token } = req.params;
     const qr = await QRCode.findOne({ publicToken: token })
-      .populate('userId', 'name phone status')
+      .populate('userId', 'name phone status email')
       .populate('vehicleId');
+
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const userAgent = req.headers['user-agent'] || '';
+    const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
 
     if (!qr) {
       return res.json({
@@ -46,6 +40,33 @@ export const getQRInfoByToken = async (req, res) => {
       });
     }
 
+    // Log Scan Event (with 10-second deduplication for same QR + IP to avoid React StrictMode/double mount duplicate entries)
+    const eventType = qr.status === 'ACTIVE' ? 'SCAN_VIEW' : (['GENERATED', 'IN STOCK', 'SOLD'].includes(qr.status) ? 'REGISTRATION_VIEW' : 'SCAN_VIEW');
+    const tenSecondsAgo = new Date(Date.now() - 10 * 1000);
+    
+    ScanLog.findOne({
+      qrId: qr._id,
+      ipAddress,
+      eventType,
+      createdAt: { $gte: tenSecondsAgo }
+    }).then((recentLog) => {
+      if (!recentLog) {
+        ScanLog.create({
+          qrId: qr._id,
+          copyCode: qr.copyCode,
+          productId: qr.productId,
+          publicToken: token,
+          userId: qr.userId?._id,
+          vehicleId: qr.vehicleId?._id,
+          vehicleNumber: qr.vehicleId?.vehicleNumber,
+          eventType,
+          ipAddress,
+          userAgent,
+          device
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+
     if (qr.status === 'SUSPENDED') {
       return res.json({
         success: false,
@@ -54,13 +75,16 @@ export const getQRInfoByToken = async (req, res) => {
       });
     }
 
+    // Unregistered / Physical QR -> Directly open Registration Form
     if (['GENERATED', 'IN STOCK', 'SOLD'].includes(qr.status)) {
       return res.json({
         success: true,
         status: 'UNREGISTERED',
         productId: qr.productId,
         copyCode: qr.copyCode,
-        message: 'This QR is ready for first-time vehicle registration'
+        qrFor: qr.qrFor || qr.qrType || 'Car',
+        user: qr.userId ? { name: qr.userId.name, phone: qr.userId.phone, email: qr.userId.email } : null,
+        message: 'This QR is ready for registration'
       });
     }
 
@@ -125,8 +149,12 @@ export const verifyPlateLast4Digits = async (req, res) => {
     const { token } = req.params;
     const { last4Digits } = req.body;
 
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const userAgent = req.headers['user-agent'] || '';
+    const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
+
     if (!last4Digits || String(last4Digits).trim().length < 4) {
-      return res.status(400).json({ success: false, message: 'Please provide the 4 digits of the vehicle number plate' });
+      return res.status(400).json({ success: false, message: 'Please provide the 4 digits of the item tag / number plate' });
     }
 
     const qr = await QRCode.findOne({ publicToken: token })
@@ -140,15 +168,46 @@ export const verifyPlateLast4Digits = async (req, res) => {
     const fullPlate = (qr.vehicleId?.vehicleNumber || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     const inputDigits = String(last4Digits).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-    // Check if input matches the last 4 characters of the number plate
+    // Check if input matches the last 4 characters
     const actualLast4 = fullPlate.slice(-4);
 
     if (inputDigits !== actualLast4) {
+      // Log Failed Verification Attempt
+      ScanLog.create({
+        qrId: qr._id,
+        copyCode: qr.copyCode,
+        productId: qr.productId,
+        publicToken: token,
+        userId: qr.userId?._id,
+        vehicleId: qr.vehicleId?._id,
+        vehicleNumber: qr.vehicleId?.vehicleNumber,
+        eventType: 'PLATE_FAILED',
+        notes: `Entered: ${inputDigits}`,
+        ipAddress,
+        userAgent,
+        device
+      }).catch(() => {});
+
       return res.status(400).json({
         success: false,
-        message: 'Incorrect last 4 digits. Please check the vehicle physical plate.'
+        message: 'Incorrect last 4 digits. Please check the physical tag / plate.'
       });
     }
+
+    // Log Successful Verification
+    ScanLog.create({
+      qrId: qr._id,
+      copyCode: qr.copyCode,
+      productId: qr.productId,
+      publicToken: token,
+      userId: qr.userId?._id,
+      vehicleId: qr.vehicleId?._id,
+      vehicleNumber: qr.vehicleId?.vehicleNumber,
+      eventType: 'PLATE_VERIFIED',
+      ipAddress,
+      userAgent,
+      device
+    }).catch(() => {});
 
     const wallet = await QuotaWallet.findOne({ qrId: qr._id });
     const canCall = wallet ? wallet.callBalance > 0 : false;
@@ -254,57 +313,90 @@ export const registerQR = async (req, res) => {
     const validityDays = qr.validityDays || 365;
     const renewalAmount = qr.renewalAmount || 199;
 
-    // Activate QR
     const now = new Date();
     const expiry = new Date(now.getTime() + validityDays * 24 * 60 * 60 * 1000);
 
-    qr.userId = user._id;
-    qr.vehicleId = vehicle._id;
-    qr.status = 'ACTIVE';
-    qr.activationDate = now;
-    qr.expiryDate = expiry;
-    await qr.save();
+    // 1. Find ALL sibling copies sharing this productId (e.g. SD005C1, SD005C2...)
+    const siblingQRs = await QRCode.find({ productId: qr.productId });
 
-    // Create Subscription
-    await Subscription.create({
-      userId: user._id,
-      qrId: qr._id,
-      startDate: now,
-      expiryDate: expiry,
-      status: 'ACTIVE',
-      renewalAmount: renewalAmount
-    });
+    // 2. Activate ALL sibling copies with the exact same vehicleId, userId, and validity
+    await QRCode.updateMany(
+      { productId: qr.productId },
+      {
+        userId: user._id,
+        vehicleId: vehicle._id,
+        status: 'ACTIVE',
+        activationDate: now,
+        expiryDate: expiry
+      }
+    );
 
-    // Create Initial Quota Wallet based on this specific QR configuration
-    const wallet = await QuotaWallet.create({
-      userId: user._id,
-      qrId: qr._id,
-      callBalance: initialCalls,
-      messageBalance: initialMessages,
-      totalCallsPurchased: initialCalls,
-      totalMessagesPurchased: initialMessages
-    });
+    // 3. Create Subscription and Initial Quota Wallet for each sibling copy
+    for (const item of siblingQRs) {
+      await Subscription.create({
+        userId: user._id,
+        qrId: item._id,
+        startDate: now,
+        expiryDate: expiry,
+        status: 'ACTIVE',
+        renewalAmount: renewalAmount
+      });
 
-    // Create Ledger Transactions
+      await QuotaWallet.findOneAndUpdate(
+        { qrId: item._id },
+        {
+          userId: user._id,
+          qrId: item._id,
+          callBalance: initialCalls,
+          messageBalance: initialMessages,
+          totalCallsPurchased: initialCalls,
+          totalMessagesPurchased: initialMessages
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    // 4. Create Ledger Transactions ONCE for the entire Kit Set (productId)
     await QuotaTransaction.create({
       userId: user._id,
       qrId: qr._id,
+      productId: qr.productId,
       type: 'CREDIT',
       category: 'CALL',
       quantity: initialCalls,
       balanceAfter: initialCalls,
-      reason: 'Initial QR Activation Quota'
+      source: 'INITIAL_FREE',
+      amountPaid: 0,
+      performedBy: 'System (Kit Activation)',
+      reason: 'Initial Starter Calling Quota (Included with Kit)'
     });
 
     await QuotaTransaction.create({
       userId: user._id,
       qrId: qr._id,
+      productId: qr.productId,
       type: 'CREDIT',
       category: 'MESSAGE',
       quantity: initialMessages,
       balanceAfter: initialMessages,
-      reason: 'Initial QR Activation Quota'
+      source: 'INITIAL_FREE',
+      amountPaid: 0,
+      performedBy: 'System (Kit Activation)',
+      reason: 'Initial Starter SMS Quota (Included with Kit)'
     });
+
+    // 5. Auto-link Order if user has an unclaimed physical order
+    await Order.findOneAndUpdate(
+      {
+        $or: [{ customerPhone: phone }, { customerEmail: user.email }, { userId: user._id }],
+        isClaimed: { $ne: true }
+      },
+      {
+        isClaimed: true,
+        claimedAt: now,
+        claimedProductId: qr.productId
+      }
+    );
 
     // Generate token for auto-login
     const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET || 'supersecretjwtkey_replace_in_prod', {
@@ -313,18 +405,27 @@ export const registerQR = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Vehicle registration & QR activation successful!',
+      message: `🎉 All ${siblingQRs.length} QR stickers (${qr.productId}) activated successfully!`,
       token: jwtToken,
       user: {
         id: user._id,
         name: user.name,
-        phone: user.phone
+        phone: user.phone,
+        role: user.role
+      },
+      vehicle: {
+        id: vehicle._id,
+        vehicleName: vehicle.vehicleName,
+        vehicleBrand: vehicle.vehicleBrand,
+        vehicleNumber: vehicle.vehicleNumber
       },
       qr: {
+        id: qr._id,
+        productId: qr.productId,
         copyCode: qr.copyCode,
-        expiryDate: qr.expiryDate,
-        callBalance: wallet.callBalance,
-        messageBalance: wallet.messageBalance
+        totalCopiesActivated: siblingQRs.length,
+        status: 'ACTIVE',
+        expiryDate: expiry
       }
     });
   } catch (error) {
@@ -355,6 +456,14 @@ export const initiateCall = async (req, res) => {
       });
     }
 
+    // Synchronize deducted balance across all sibling QR copies sharing same productId
+    const siblingQRs = await QRCode.find({ productId: qr.productId });
+    const siblingIds = siblingQRs.map(s => s._id);
+    await QuotaWallet.updateMany(
+      { qrId: { $in: siblingIds } },
+      { callBalance: wallet.callBalance, totalCallsUsed: wallet.totalCallsUsed }
+    );
+
     // Log Quota Ledger
     await QuotaTransaction.create({
       userId: qr.userId._id,
@@ -365,6 +474,24 @@ export const initiateCall = async (req, res) => {
       balanceAfter: wallet.callBalance,
       reason: 'Public Scan Voice Call initiated'
     });
+
+    // Log Scan Event
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const userAgent = req.headers['user-agent'] || '';
+    const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
+    ScanLog.create({
+      qrId: qr._id,
+      copyCode: qr.copyCode,
+      productId: qr.productId,
+      publicToken: token,
+      userId: qr.userId._id,
+      vehicleId: qr.vehicleId?._id,
+      vehicleNumber: qr.vehicleId?.vehicleNumber,
+      eventType: 'CALL_INITIATED',
+      ipAddress,
+      userAgent,
+      device
+    }).catch(() => {});
 
     res.json({
       success: true,
@@ -401,6 +528,14 @@ export const initiateMessage = async (req, res) => {
       });
     }
 
+    // Synchronize deducted message balance across all sibling QR copies
+    const siblingQRs = await QRCode.find({ productId: qr.productId });
+    const siblingIds = siblingQRs.map(s => s._id);
+    await QuotaWallet.updateMany(
+      { qrId: { $in: siblingIds } },
+      { messageBalance: wallet.messageBalance, totalMessagesUsed: wallet.totalMessagesUsed }
+    );
+
     // Log Quota Ledger
     await QuotaTransaction.create({
       userId: qr.userId._id,
@@ -411,6 +546,25 @@ export const initiateMessage = async (req, res) => {
       balanceAfter: wallet.messageBalance,
       reason: 'Public Scan SMS/WhatsApp Notification sent'
     });
+
+    // Log Scan Event
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const userAgent = req.headers['user-agent'] || '';
+    const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
+    ScanLog.create({
+      qrId: qr._id,
+      copyCode: qr.copyCode,
+      productId: qr.productId,
+      publicToken: token,
+      userId: qr.userId._id,
+      vehicleId: qr.vehicleId?._id,
+      vehicleNumber: qr.vehicleId?.vehicleNumber,
+      eventType: 'WHATSAPP_INITIATED',
+      notes: messageText,
+      ipAddress,
+      userAgent,
+      device
+    }).catch(() => {});
 
     const targetPhone = qr.userId.whatsappNumber || qr.userId.phone;
     const defaultMsg = encodeURIComponent(messageText || `Hello, I am reaching out regarding your vehicle (Safe Drive QR).`);
@@ -460,6 +614,25 @@ export const triggerEmergency = async (req, res) => {
       notifiedContacts: contacts
     });
 
+    // Log Scan Event
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const userAgent = req.headers['user-agent'] || '';
+    const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
+    ScanLog.create({
+      qrId: qr._id,
+      copyCode: qr.copyCode,
+      productId: qr.productId,
+      publicToken: token,
+      userId: qr.userId?._id,
+      vehicleId: qr.vehicleId?._id,
+      vehicleNumber: qr.vehicleId?.vehicleNumber,
+      eventType: 'SCAN_VIEW',
+      notes: 'Emergency SOS Triggered',
+      ipAddress,
+      userAgent,
+      device
+    }).catch(() => {});
+
     const locationText = generatedMapsLink ? `%0A📍 Live Incident Location: ${encodeURIComponent(generatedMapsLink)}` : '';
     const alertMessage = `🚨 *SAFE DRIVE EMERGENCY ALERT* 🚨%0A%0AVehicle Plate: *${qr.vehicleId?.vehicleNumber}*%0AOwner: *${qr.userId?.name}*%0AStatus: Emergency Alert Triggered via Vehicle QR Scan!${locationText}%0A%0APlease respond or contact immediately.`;
 
@@ -478,6 +651,218 @@ export const triggerEmergency = async (req, res) => {
       alertId: alert._id,
       mapsLink: generatedMapsLink,
       emergencyContacts: formattedContacts
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * FIRST-TIME PHYSICAL QR STICKER CLAIM & VERIFICATION
+ */
+export const claimPhysicalQR = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { emailOrPhone } = req.body;
+
+    if (!emailOrPhone) {
+      return res.status(400).json({ success: false, message: 'Please enter your order email or phone number.' });
+    }
+
+    const cleanInput = emailOrPhone.trim().toLowerCase();
+
+    const qr = await QRCode.findOne({ publicToken: token });
+    if (!qr) {
+      return res.status(404).json({ success: false, message: 'Invalid or unknown QR code scanned.' });
+    }
+
+    if (qr.status === 'ACTIVE') {
+      return res.status(400).json({ success: false, message: 'This QR code is already registered and active.' });
+    }
+
+    // Search for an unclaimed physical order matching this email or phone
+    // Prioritize matching the exact QR category (e.g. Car vs Bike) first
+    const qrCategory = qr.qrFor || qr.qrType || 'Car';
+    let order = await Order.findOne({
+      $or: [
+        { customerEmail: cleanInput },
+        { customerPhone: cleanInput }
+      ],
+      productType: 'PHYSICAL',
+      qrFor: qrCategory,
+      isClaimed: false,
+      paymentStatus: 'PAID'
+    }).sort({ createdAt: 1 }); // FIFO - oldest order claimed first
+
+    // If no category-specific order found, check any physical unclaimed order for this customer
+    if (!order) {
+      order = await Order.findOne({
+        $or: [
+          { customerEmail: cleanInput },
+          { customerPhone: cleanInput }
+        ],
+        productType: 'PHYSICAL',
+        isClaimed: false,
+        paymentStatus: 'PAID'
+      }).sort({ createdAt: 1 });
+    }
+
+    if (!order) {
+      return res.status(400).json({
+        success: false,
+        message: '❌ No eligible physical order found for this email or phone number. Please enter the exact email or phone number used when placing your order, or check if your order has already been activated.'
+      });
+    }
+
+    const user = await User.findById(order.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Account not found for this order.' });
+    }
+
+    // Find all sibling QR stickers sharing the same productId (e.g. SD007C1 and SD007C2)
+    const targetProductId = qr.productId;
+    const siblingQRs = await QRCode.find({ productId: targetProductId });
+
+    await QRCode.updateMany(
+      { productId: targetProductId },
+      {
+        status: 'SOLD',
+        userId: user._id,
+        initialCalls: order.metadata?.initialCalls || 10,
+        initialMessages: order.metadata?.initialMessages || 20,
+        validityDays: order.metadata?.validityDays || 365,
+        renewalAmount: order.metadata?.renewalAmount || 199
+      }
+    );
+
+    // Mark order as claimed
+    order.isClaimed = true;
+    order.claimedAt = new Date();
+    order.claimedProductId = targetProductId;
+    order.allocatedQRIds = siblingQRs.map(q => q._id);
+    await order.save();
+
+    res.json({
+      success: true,
+      verified: true,
+      user: {
+        _id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        address: user.address
+      },
+      qr: {
+        productId: qr.productId,
+        copyCode: qr.copyCode,
+        qrFor: qr.qrFor || 'Car'
+      },
+      message: '🎉 Order verified! This QR kit is now linked to your account. Please complete your vehicle details to activate.'
+    });
+  } catch (error) {
+    console.error('Claim QR error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Error claiming physical QR kit.' });
+  }
+};
+
+/**
+ * Send OTP for First-Time QR Activation (Only for registered users)
+ */
+export const sendActivationOTP = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    const cleanPhone = (phone || '').trim().replace(/\D/g, '').slice(-10);
+
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid 10-digit mobile number' });
+    }
+
+    // Check if user exists in database
+    const existingUser = await User.findOne({
+      $or: [
+        { phone: cleanPhone },
+        { phone: `+91${cleanPhone}` },
+        { phone: `91${cleanPhone}` }
+      ]
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({
+        success: false,
+        message: '❌ User not found with this mobile number. Please enter your registered account mobile number or purchase a kit first.'
+      });
+    }
+
+    if (existingUser.status === 'SUSPENDED') {
+      return res.status(403).json({
+        success: false,
+        message: 'Account is suspended. Please contact administrator.'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `OTP sent to registered mobile +91 ${cleanPhone}`,
+      phone: cleanPhone,
+      otp: '123456',
+      userExists: true,
+      user: {
+        name: existingUser.name,
+        phone: existingUser.phone,
+        email: existingUser.email,
+        whatsappNumber: existingUser.whatsappNumber,
+        address: existingUser.address
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Verify OTP for First-Time QR Activation
+ */
+export const verifyActivationOTP = async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    const cleanPhone = (phone || '').trim().replace(/\D/g, '').slice(-10);
+    const cleanOtp = (otp || '').trim();
+
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ success: false, message: 'Invalid mobile number' });
+    }
+
+    const existingUser = await User.findOne({
+      $or: [
+        { phone: cleanPhone },
+        { phone: `+91${cleanPhone}` },
+        { phone: `91${cleanPhone}` }
+      ]
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({
+        success: false,
+        message: '❌ User not found with this mobile number.'
+      });
+    }
+
+    if (cleanOtp !== '123456') {
+      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456' });
+    }
+
+    res.json({
+      success: true,
+      verified: true,
+      phone: cleanPhone,
+      userExists: true,
+      user: {
+        name: existingUser.name,
+        phone: existingUser.phone,
+        email: existingUser.email,
+        whatsappNumber: existingUser.whatsappNumber,
+        address: existingUser.address
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

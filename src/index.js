@@ -9,6 +9,7 @@ import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import purchaseRoutes from './routes/purchaseRoutes.js';
 
 dotenv.config();
 
@@ -38,6 +39,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/purchase', purchaseRoutes);
 
 // 404 Handler
 app.use((req, res) => {

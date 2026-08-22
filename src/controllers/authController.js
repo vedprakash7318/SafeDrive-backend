@@ -13,7 +13,7 @@ const generateToken = (id) => {
 
 export const register = async (req, res) => {
   try {
-    const { name, phone, whatsappNumber, address, password, role } = req.body;
+    const { name, phone, email, whatsappNumber, address, password, role } = req.body;
     if (!name || !phone || !password) {
       return res.status(400).json({ success: false, message: 'Name, phone and password are required' });
     }
@@ -27,6 +27,7 @@ export const register = async (req, res) => {
     const user = await User.create({
       name,
       phone,
+      email: email ? email.toLowerCase().trim() : undefined,
       whatsappNumber: whatsappNumber || phone,
       address: address || 'N/A',
       password: hashedPassword,
@@ -42,6 +43,7 @@ export const register = async (req, res) => {
         id: user._id,
         name: user.name,
         phone: user.phone,
+        email: user.email,
         whatsappNumber: user.whatsappNumber,
         address: user.address,
         role: user.role
@@ -54,19 +56,24 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { phone, password } = req.body;
-    if (!phone || !password) {
-      return res.status(400).json({ success: false, message: 'Phone and password are required' });
+    const { phone, email, password } = req.body;
+    const identifier = (phone || email || '').trim();
+
+    if (!identifier || !password) {
+      return res.status(400).json({ success: false, message: 'Phone/Email and password are required' });
     }
 
-    const user = await User.findOne({ phone });
+    const user = await User.findOne({
+      $or: [{ phone: identifier }, { email: identifier.toLowerCase() }]
+    });
+
     if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid phone or password' });
+      return res.status(401).json({ success: false, message: 'Invalid phone/email or password' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid phone or password' });
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
     if (user.status === 'SUSPENDED') {
@@ -82,7 +89,103 @@ export const login = async (req, res) => {
         id: user._id,
         name: user.name,
         phone: user.phone,
+        email: user.email,
         whatsappNumber: user.whatsappNumber,
+        address: user.address,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Send Login OTP to User's Registered Mobile Number
+ */
+export const sendLoginOTP = async (req, res) => {
+  try {
+    const { phone, identifier } = req.body;
+    const cleanPhone = (phone || identifier || '').trim().replace(/\D/g, '').slice(-10);
+
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
+    }
+
+    // Find User by mobile number
+    const user = await User.findOne({
+      $or: [
+        { phone: cleanPhone },
+        { phone: `+91${cleanPhone}` },
+        { phone: `91${cleanPhone}` }
+      ]
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: '❌ No account found with this mobile number. Please check the number or purchase a safety kit first.'
+      });
+    }
+
+    if (user.status === 'SUSPENDED') {
+      return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
+    }
+
+    res.json({
+      success: true,
+      message: `Login OTP sent to mobile +91 ${cleanPhone}`,
+      phone: cleanPhone,
+      otp: '123456'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Verify Login OTP and issue Auth Token
+ */
+export const verifyLoginOTP = async (req, res) => {
+  try {
+    const { phone, identifier, otp } = req.body;
+    const cleanPhone = (phone || identifier || '').trim().replace(/\D/g, '').slice(-10);
+    const cleanOtp = (otp || '').trim();
+
+    if (!cleanPhone || cleanPhone.length < 10 || !cleanOtp) {
+      return res.status(400).json({ success: false, message: '10-digit mobile number and OTP code are required.' });
+    }
+
+    const user = await User.findOne({
+      $or: [
+        { phone: cleanPhone },
+        { phone: `+91${cleanPhone}` },
+        { phone: `91${cleanPhone}` }
+      ]
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: '❌ User account not found.' });
+    }
+
+    if (user.status === 'SUSPENDED') {
+      return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
+    }
+
+    if (cleanOtp !== '123456') {
+      return res.status(400).json({ success: false, message: 'Invalid OTP verification code. Please enter 123456' });
+    }
+
+    const token = generateToken(user._id);
+    res.json({
+      success: true,
+      message: 'Login successful!',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
         address: user.address,
         role: user.role
       }

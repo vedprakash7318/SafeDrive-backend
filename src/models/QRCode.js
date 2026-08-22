@@ -7,18 +7,20 @@ const qrCodeSchema = new mongoose.Schema({
   publicToken: { type: String, required: true, unique: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   vehicleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vehicle' },
-  status: { 
-    type: String, 
+  status: {
+    type: String,
     enum: ['GENERATED', 'IN STOCK', 'SOLD', 'REGISTERED', 'ACTIVE', 'EXPIRED', 'SUSPENDED', 'CANCELLED'],
     default: 'IN STOCK'
   },
   // Batch-configured parameters set at creation time
-  qrType: { type: String, default: 'Standard Sticker' },
+  qrFor: { type: String, default: 'Car' }, // Vehicle/Item type: Car, Bike, Luggage, etc.
+  qrType: { type: String, default: 'PHYSICAL' }, // Physical vs Digital
   qrTypeId: { type: mongoose.Schema.Types.ObjectId, ref: 'QRType' },
-  initialCalls: { type: Number, default: 10 },
-  initialMessages: { type: Number, default: 20 },
-  validityDays: { type: Number, default: 365 },
-  renewalAmount: { type: Number, default: 199 },
+  qrFormatId: { type: mongoose.Schema.Types.ObjectId, ref: 'QRFormat' },
+  initialCalls: { type: Number, default: null },
+  initialMessages: { type: Number, default: null },
+  validityDays: { type: Number, default: null },
+  renewalAmount: { type: Number, default: null },
 
   isDeleted: { type: Boolean, default: false },
   deletedAt: { type: Date },

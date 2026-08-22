@@ -11,19 +11,34 @@ import Payment from '../models/Payment.js';
 import AuditLog from '../models/AuditLog.js';
 import QRTag from '../models/QRTag.js';
 import QRType from '../models/QRType.js';
+import QRFormat from '../models/QRFormat.js';
 import ScanReason from '../models/ScanReason.js';
 import SystemSetting from '../models/SystemSetting.js';
+import Product from '../models/Product.js';
+import Order from '../models/Order.js';
+import ScanLog from '../models/ScanLog.js';
+import { uploadToCloudinary } from '../utils/cloudinary.js';
 
 // ==========================================
 // 1. STATS & ANALYTICS
 // ==========================================
 export const getStats = async (req, res) => {
   try {
-    const totalQRs = await QRCode.countDocuments({ isDeleted: { $ne: true } });
-    const activeQRs = await QRCode.countDocuments({ status: 'ACTIVE', isDeleted: { $ne: true } });
-    const inStockQRs = await QRCode.countDocuments({ status: { $in: ['GENERATED', 'IN STOCK'] }, isDeleted: { $ne: true } });
-    const expiredQRs = await QRCode.countDocuments({ status: 'EXPIRED', isDeleted: { $ne: true } });
-    const suspendedQRs = await QRCode.countDocuments({ status: 'SUSPENDED', isDeleted: { $ne: true } });
+    // Count distinct Kit Sets (by productId) so multiple copies (SD001C1, SD001C2) are counted as 1 kit set!
+    const distinctTotalKits = await QRCode.distinct('productId', { isDeleted: { $ne: true } });
+    const totalQRs = distinctTotalKits.length;
+
+    const distinctActiveKits = await QRCode.distinct('productId', { status: 'ACTIVE', isDeleted: { $ne: true } });
+    const activeQRs = distinctActiveKits.length;
+
+    const distinctInStockKits = await QRCode.distinct('productId', { status: { $in: ['GENERATED', 'IN STOCK'] }, isDeleted: { $ne: true } });
+    const inStockQRs = distinctInStockKits.length;
+
+    const distinctExpiredKits = await QRCode.distinct('productId', { status: 'EXPIRED', isDeleted: { $ne: true } });
+    const expiredQRs = distinctExpiredKits.length;
+
+    const distinctSuspendedKits = await QRCode.distinct('productId', { status: 'SUSPENDED', isDeleted: { $ne: true } });
+    const suspendedQRs = distinctSuspendedKits.length;
 
     const totalUsers = await User.countDocuments({ role: 'USER' });
     const activeUsers = await User.countDocuments({ role: 'USER', status: 'ACTIVE' });
@@ -82,20 +97,9 @@ export const getStats = async (req, res) => {
 // ==========================================
 // 2. QR TYPES MANAGEMENT (ONLY 1 TEXT FIELD `name` + SOFT DELETE & RESTORE)
 // ==========================================
-const DEFAULT_QR_TYPES = [
-  { name: 'Standard Sticker' },
-  { name: 'Metal Card' },
-  { name: 'Windshield Tag' },
-  { name: 'Two-Wheeler Badge' }
-];
-
 export const getQRTypes = async (req, res) => {
   try {
     const showDeleted = req.query.showDeleted === 'true';
-    const totalEver = await QRType.countDocuments();
-    if (totalEver === 0) {
-      await QRType.insertMany(DEFAULT_QR_TYPES);
-    }
     const filter = showDeleted ? { isDeleted: true } : { isDeleted: { $ne: true } };
     const types = await QRType.find(filter).sort({ createdAt: 1 });
     res.json({ success: true, types });
@@ -185,14 +189,6 @@ export const restoreQRType = async (req, res) => {
 export const getTags = async (req, res) => {
   try {
     const showDeleted = req.query.showDeleted === 'true';
-    const totalEver = await QRTag.countDocuments();
-    if (totalEver === 0) {
-      await QRTag.insertMany([
-        { name: 'DEFAULT-BATCH', description: 'General Distribution Inventory' },
-        { name: 'DEALER-NORTH', description: 'North Zone Dealers & Showrooms' },
-        { name: 'ONLINE-PROMO', description: 'Online Sales & Direct Website Orders' }
-      ]);
-    }
     const filter = showDeleted ? { isDeleted: true } : { isDeleted: { $ne: true } };
     const tags = await QRTag.find(filter).sort({ createdAt: -1 });
     res.json({ success: true, tags });
@@ -294,18 +290,43 @@ export const restoreTag = async (req, res) => {
 // ==========================================
 // 4. AUTO-INCREMENT SEQUENCE CALCULATION
 // ==========================================
-export const getNextSequenceNumber = async (req, res) => {
-  try {
-    const lastQR = await QRCode.findOne({ productId: /^SD\d+$/ }).sort({ createdAt: -1 });
+export const calculateNextStartNumber = async () => {
+  const existingQRs = await QRCode.find(
+    { $or: [{ productId: /^SD\d+/i }, { copyCode: /^SD\d+/i }] },
+    { productId: 1, copyCode: 1 }
+  );
 
-    let nextNumber = 1;
-    if (lastQR && lastQR.productId) {
-      const match = lastQR.productId.match(/\d+$/);
+  let maxNum = 0;
+  for (const qr of existingQRs) {
+    if (qr.productId) {
+      const match = qr.productId.match(/\d+/);
       if (match) {
-        nextNumber = parseInt(match[0], 10) + 1;
+        const num = parseInt(match[0], 10);
+        if (num > maxNum) maxNum = num;
       }
     }
+    if (qr.copyCode) {
+      const match = qr.copyCode.match(/^SD(\d+)/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) maxNum = num;
+      }
+    }
+  }
 
+  let nextStart = maxNum + 1;
+
+  // Double check uniqueness in DB to ensure no duplicate copyCode collision
+  while (await QRCode.exists({ copyCode: new RegExp(`^SD0*${nextStart}C\\d+`, 'i') })) {
+    nextStart++;
+  }
+
+  return nextStart;
+};
+
+export const getNextSequenceNumber = async (req, res) => {
+  try {
+    const nextNumber = await calculateNextStartNumber();
     const formattedCode = `SD${String(nextNumber).padStart(3, '0')}`;
     res.json({
       success: true,
@@ -319,43 +340,48 @@ export const getNextSequenceNumber = async (req, res) => {
 };
 
 // ==========================================
-// 5. BATCH QR CODE GENERATION
+// 5. BATCH QR CODE GENERATION (QR For: Vehicle/Item + QR Type: Physical/Digital + Group/Tag + Quantity)
 // ==========================================
 export const generateQRBatch = async (req, res) => {
   try {
     const {
       quantity = 10,
-      tag = 'DEFAULT-BATCH',
-      qrTypeName = 'Standard Sticker',
+      tag = 'DEFAULT-GROUP',
+      qrFor = 'Car',
+      qrTypeName, // Backward compatibility alias
+      qrType = 'PHYSICAL', // PHYSICAL vs DIGITAL
       qrTypeId,
-      initialCalls = 10,
-      initialMessages = 20,
-      validityDays = 365,
-      renewalAmount = 199
+      qrFormatId
     } = req.body;
+
+    const chosenQrFor = qrFor || qrTypeName || 'Car';
+    
+    // Resolve QRFormat document if provided
+    let chosenQRFormatDoc = null;
+    if (qrFormatId) {
+      chosenQRFormatDoc = await QRFormat.findById(qrFormatId);
+    } else if (qrType) {
+      chosenQRFormatDoc = await QRFormat.findOne({ name: qrType, isDeleted: { $ne: true } });
+    }
+    const chosenQrType = chosenQRFormatDoc ? (chosenQRFormatDoc.type || 'PHYSICAL') : ((qrType || 'PHYSICAL').toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL');
 
     const count = parseInt(quantity, 10);
     if (isNaN(count) || count <= 0 || count > 500) {
-      return res.status(400).json({ success: false, message: 'Quantity must be between 1 and 500' });
+      return res.status(400).json({ success: false, message: 'Quantity must be between 1 and 500 sets' });
     }
 
-    // Auto-calculate start number from database
-    const lastQR = await QRCode.findOne({ productId: /^SD\d+$/ }).sort({ createdAt: -1 });
-    let startNum = 1;
-    if (lastQR && lastQR.productId) {
-      const match = lastQR.productId.match(/\d+$/);
-      if (match) {
-        startNum = parseInt(match[0], 10) + 1;
-      }
-    }
+    const cleanTag = tag.trim().toUpperCase().replace(/\s+/g, '-');
 
-    // Determine copiesPerSet from selected QR Type
+    // Robust start number calculation
+    const startNum = await calculateNextStartNumber();
+
+    // Determine copiesPerSet from selected QR For (Vehicle/Item Type)
     let copiesPerSet = 2;
     let chosenQRTypeDoc = null;
     if (qrTypeId) {
       chosenQRTypeDoc = await QRType.findById(qrTypeId);
-    } else if (qrTypeName) {
-      chosenQRTypeDoc = await QRType.findOne({ name: qrTypeName, isDeleted: { $ne: true } });
+    } else if (chosenQrFor) {
+      chosenQRTypeDoc = await QRType.findOne({ name: chosenQrFor, isDeleted: { $ne: true } });
     }
 
     if (chosenQRTypeDoc && chosenQRTypeDoc.copiesPerSet) {
@@ -374,16 +400,14 @@ export const generateQRBatch = async (req, res) => {
         const token = crypto.randomBytes(16).toString('hex');
         const copy = new QRCode({
           productId,
-          batchId: tag,
-          qrType: qrTypeName,
+          batchId: cleanTag,
+          qrFor: chosenQrFor,
+          qrType: chosenQrType,
           qrTypeId: chosenQRTypeDoc?._id || qrTypeId || null,
+          qrFormatId: chosenQRFormatDoc?._id || qrFormatId || null,
           copyCode: `${productId}C${c}`,
           publicToken: token,
-          status: 'IN STOCK',
-          initialCalls: Number(initialCalls),
-          initialMessages: Number(initialMessages),
-          validityDays: Number(validityDays),
-          renewalAmount: Number(renewalAmount)
+          status: 'IN STOCK'
         });
         generatedQRs.push(copy);
       }
@@ -391,38 +415,151 @@ export const generateQRBatch = async (req, res) => {
 
     await QRCode.insertMany(generatedQRs);
 
-    // Update sets counter on Tag and QRType
-    await QRTag.findOneAndUpdate({ name: tag }, { $inc: { totalSets: count } });
+    // Update or create Tag
+    await QRTag.findOneAndUpdate(
+      { name: cleanTag },
+      { $inc: { totalSets: count }, isDeleted: false },
+      { upsert: true, new: true }
+    );
+
     if (chosenQRTypeDoc) {
       await QRType.findByIdAndUpdate(chosenQRTypeDoc._id, { $inc: { totalSets: count } });
     } else if (qrTypeId) {
       await QRType.findByIdAndUpdate(qrTypeId, { $inc: { totalSets: count } });
-    } else {
-      await QRType.findOneAndUpdate({ name: qrTypeName }, { $inc: { totalSets: count } });
     }
 
     await AuditLog.create({
       adminId: req.user._id,
       action: 'GENERATE_QR_BATCH',
       newValue: {
-        tag,
-        qrType: qrTypeName,
+        groupName: cleanTag,
+        qrFor: chosenQrFor,
+        qrType: chosenQrType,
         copiesPerSet,
         quantity: count,
         totalCopies: count * copiesPerSet,
         startNumber: startNum,
-        endNumber: startNum + count - 1,
-        initialCalls,
-        initialMessages,
-        validityDays,
-        renewalAmount
+        endNumber: startNum + count - 1
       }
     });
 
     res.json({
       success: true,
-      message: `Successfully generated ${count} QR sets (${count * copiesPerSet} stickers [C1-C${copiesPerSet}]: SD${String(startNum).padStart(3, '0')} to SD${String(startNum + count - 1).padStart(3, '0')}) with Type [${qrTypeName}] and Tag [${tag}].`,
+      message: `🎉 Successfully generated ${count} QR sets (${count * copiesPerSet} stickers [C1-C${copiesPerSet}]: SD${String(startNum).padStart(3, '0')} to SD${String(startNum + count - 1).padStart(3, '0')}) for [${chosenQrFor} • ${chosenQrType}] in Group [${cleanTag}]!`,
       generatedCount: generatedQRs.length
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * 5.1 GET ALL QR GROUPS (Aggregated by Group / Batch Name)
+ */
+export const getQRGroups = async (req, res) => {
+  try {
+    const groups = await QRCode.aggregate([
+      { $match: { isDeleted: { $ne: true } } },
+      {
+        $group: {
+          _id: '$batchId',
+          qrFor: { $first: '$qrFor' },
+          qrType: { $first: '$qrType' },
+          qrTypeId: { $first: '$qrTypeId' },
+          firstProduct: { $min: '$productId' },
+          lastProduct: { $max: '$productId' },
+          uniqueProducts: { $addToSet: '$productId' },
+          totalStickers: { $sum: 1 },
+          inStockCount: { $sum: { $cond: [{ $eq: ['$status', 'IN STOCK'] }, 1, 0] } },
+          soldCount: { $sum: { $cond: [{ $eq: ['$status', 'SOLD'] }, 1, 0] } },
+          activeCount: { $sum: { $cond: [{ $eq: ['$status', 'ACTIVE'] }, 1, 0] } },
+          suspendedCount: { $sum: { $cond: [{ $eq: ['$status', 'SUSPENDED'] }, 1, 0] } },
+          createdAt: { $min: '$createdAt' }
+        }
+      },
+      {
+        $project: {
+          groupName: '$_id',
+          qrFor: 1,
+          qrType: 1,
+          qrTypeId: 1,
+          totalSets: { $size: '$uniqueProducts' },
+          totalStickers: 1,
+          firstProduct: 1,
+          lastProduct: 1,
+          inStockCount: 1,
+          soldCount: 1,
+          activeCount: 1,
+          suspendedCount: 1,
+          createdAt: 1
+        }
+      },
+      { $sort: { createdAt: -1 } }
+    ]);
+
+    res.json({ success: true, groups });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getQRsByGroup = async (req, res) => {
+  try {
+    const { groupName } = req.params;
+    const qrs = await QRCode.find({ batchId: groupName, isDeleted: { $ne: true } })
+      .populate('userId', 'name phone email')
+      .populate('vehicleId', 'vehicleBrand vehicleName vehicleNumber emergencyContacts')
+      .sort({ productId: 1, copyCode: 1 });
+
+    const kitMap = {};
+    for (const q of qrs) {
+      if (!kitMap[q.productId]) {
+        kitMap[q.productId] = {
+          productId: q.productId,
+          batchId: q.batchId,
+          qrFor: q.qrFor || 'Car',
+          qrType: q.qrType || 'PHYSICAL',
+          status: q.status,
+          copies: [],
+          user: q.userId ? { _id: q.userId._id, name: q.userId.name, phone: q.userId.phone, email: q.userId.email } : null,
+          vehicle: q.vehicleId ? { _id: q.vehicleId._id, vehicleName: q.vehicleId.vehicleName, vehicleBrand: q.vehicleId.vehicleBrand, vehicleNumber: q.vehicleId.vehicleNumber } : null,
+          activationDate: q.activationDate,
+          expiryDate: q.expiryDate,
+          createdAt: q.createdAt,
+          primaryQRId: q._id
+        };
+      }
+      kitMap[q.productId].copies.push({
+        _id: q._id,
+        copyCode: q.copyCode,
+        publicToken: q.publicToken,
+        status: q.status
+      });
+
+      if (q.status === 'ACTIVE') kitMap[q.productId].status = 'ACTIVE';
+      else if (q.status === 'SOLD' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'SOLD';
+      else if (q.status === 'EXPIRED' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'EXPIRED';
+      else if (q.status === 'SUSPENDED') kitMap[q.productId].status = 'SUSPENDED';
+    }
+
+    const uniqueKits = Object.values(kitMap);
+    const totalKits = uniqueKits.length;
+    const inStockKits = uniqueKits.filter(k => k.status === 'IN STOCK' || k.status === 'GENERATED').length;
+    const activeKits = uniqueKits.filter(k => k.status === 'ACTIVE').length;
+    const soldKits = uniqueKits.filter(k => k.status === 'SOLD').length;
+
+    res.json({
+      success: true,
+      groupName,
+      stats: {
+        totalKits,
+        totalStickers: qrs.length,
+        inStockKits,
+        activeKits,
+        soldKits
+      },
+      kits: uniqueKits,
+      qrs
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -474,6 +611,61 @@ export const getQRs = async (req, res) => {
   }
 };
 
+export const getQRById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const qr = await QRCode.findById(id)
+      .populate('userId', 'name phone email role createdAt')
+      .populate('vehicleId')
+      .populate('qrTypeId');
+
+    if (!qr) {
+      return res.status(404).json({ success: false, message: 'QR Code not found' });
+    }
+
+    const wallet = await QuotaWallet.findOne({ qrId: qr._id });
+    const siblingQRs = await QRCode.find({ productId: qr.productId });
+    const siblingIds = siblingQRs.map(s => s._id);
+
+    const rawQuotaLedger = await QuotaTransaction.find({
+      $or: [{ qrId: qr._id }, { qrId: { $in: siblingIds } }]
+    }).sort({ createdAt: -1 });
+
+    const seenKitLogs = new Set();
+    const quotaLedger = [];
+    for (const q of rawQuotaLedger) {
+      const prodId = q.productId || qr.productId || 'Kit';
+      const timeWindow = new Date(q.createdAt).toISOString().slice(0, 16);
+      const key = `${prodId}_${timeWindow}_${q.category}_${q.quantity}_${q.type}`;
+      if (!seenKitLogs.has(key)) {
+        seenKitLogs.add(key);
+        quotaLedger.push({
+          ...q.toObject(),
+          kitProductId: prodId
+        });
+      }
+    }
+
+    const payments = await Payment.find({
+      $or: [
+        { 'metadata.qrCodes': qr.copyCode },
+        { 'metadata.productId': qr.productId }
+      ]
+    }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      qr,
+      wallet,
+      siblingQRs,
+      quotaLedger,
+      payments
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const updateQRStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -505,7 +697,7 @@ export const updateQRStatus = async (req, res) => {
 export const adminRenewQR = async (req, res) => {
   try {
     const { id } = req.params;
-    const { validityDays = 365, bonusCalls = 10, bonusMessages = 20, reason = 'Admin Manual Renewal' } = req.body;
+    const { validityDays = 365, bonusCalls = 10, bonusMessages = 20, reason = 'Admin Manual Renewal', paymentAmount = 0 } = req.body;
 
     const qr = await QRCode.findById(id);
     if (!qr || qr.isDeleted) {
@@ -516,42 +708,95 @@ export const adminRenewQR = async (req, res) => {
     const currentExpiry = qr.expiryDate && new Date(qr.expiryDate) > now ? new Date(qr.expiryDate) : now;
     const newExpiry = new Date(currentExpiry.getTime() + validityDays * 24 * 60 * 60 * 1000);
 
-    qr.expiryDate = newExpiry;
-    qr.status = 'ACTIVE';
-    await qr.save();
+    // Update ALL sibling copies of this kit
+    const siblingQRs = await QRCode.find({ productId: qr.productId, isDeleted: { $ne: true } });
 
-    let wallet = await QuotaWallet.findOne({ qrId: qr._id });
-    if (!wallet) {
-      wallet = new QuotaWallet({
+    await QRCode.updateMany(
+      { productId: qr.productId },
+      { expiryDate: newExpiry, status: 'ACTIVE' }
+    );
+
+    // Update Quota Wallets
+    for (const item of siblingQRs) {
+      let wallet = await QuotaWallet.findOne({ qrId: item._id });
+      if (!wallet) {
+        wallet = new QuotaWallet({
+          userId: qr.userId,
+          vehicleId: qr.vehicleId,
+          qrId: item._id,
+          callBalance: 0,
+          messageBalance: 0
+        });
+      }
+      wallet.callBalance += Number(bonusCalls);
+      wallet.messageBalance += Number(bonusMessages);
+      wallet.totalCallsPurchased += Number(bonusCalls);
+      wallet.totalMessagesPurchased += Number(bonusMessages);
+      await wallet.save();
+
+      // Log Quota Transaction
+      if (bonusCalls > 0) {
+        await QuotaTransaction.create({
+          userId: qr.userId,
+          qrId: item._id,
+          type: 'CREDIT',
+          category: 'CALL',
+          quantity: Number(bonusCalls),
+          balanceAfter: wallet.callBalance,
+          reason: `Subscription Renewal: ${reason}`
+        });
+      }
+      if (bonusMessages > 0) {
+        await QuotaTransaction.create({
+          userId: qr.userId,
+          qrId: item._id,
+          type: 'CREDIT',
+          category: 'MESSAGE',
+          quantity: Number(bonusMessages),
+          balanceAfter: wallet.messageBalance,
+          reason: `Subscription Renewal: ${reason}`
+        });
+      }
+    }
+
+    // Record Subscription record
+    await Subscription.create({
+      userId: qr.userId,
+      qrId: qr._id,
+      startDate: currentExpiry,
+      expiryDate: newExpiry,
+      status: 'ACTIVE',
+      renewalAmount: Number(paymentAmount) || qr.renewalAmount || 199
+    });
+
+    // Record Payment record if renewal amount entered
+    if (Number(paymentAmount) > 0) {
+      await Payment.create({
         userId: qr.userId,
-        vehicleId: qr.vehicleId,
-        qrId: qr._id,
-        callBalance: 0,
-        messageBalance: 0
+        orderId: `REN-${Date.now()}`,
+        paymentId: `pay_admin_ren_${Date.now()}`,
+        amount: Number(paymentAmount),
+        currency: 'INR',
+        purpose: 'SUBSCRIPTION_RENEWAL',
+        status: 'SUCCESSFUL',
+        metadata: {
+          productId: qr.productId,
+          validityDays,
+          reason
+        }
       });
     }
 
-    wallet.callBalance += Number(bonusCalls);
-    wallet.messageBalance += Number(bonusMessages);
-    await wallet.save();
-
     res.json({
       success: true,
-      message: `QR renewed successfully for ${validityDays} days. Existing balance preserved + ${bonusCalls} calls and ${bonusMessages} messages added.`,
-      newExpiryDate: newExpiry,
-      currentBalance: {
-        calls: wallet.callBalance,
-        messages: wallet.messageBalance
-      }
+      message: `QR Kit (${qr.productId}) renewed successfully for ${validityDays} days. Added ${bonusCalls} calls and ${bonusMessages} messages.`,
+      newExpiryDate: newExpiry
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==========================================
-// 7. USERS & VEHICLES MANAGEMENT
-// ==========================================
 export const getUsers = async (req, res) => {
   try {
     const users = await User.find({ role: 'USER' }).select('-password').sort({ createdAt: -1 });
@@ -559,18 +804,266 @@ export const getUsers = async (req, res) => {
     const userDetails = await Promise.all(
       users.map(async (u) => {
         const vehicles = await Vehicle.find({ userId: u._id });
-        const qrs = await QRCode.find({ userId: u._id, isDeleted: { $ne: true } });
+        const qrs = await QRCode.find({ userId: u._id, isDeleted: { $ne: true } }).populate('vehicleId');
         const wallet = await QuotaWallet.findOne({ userId: u._id });
+        const orders = await Payment.find({ userId: u._id, status: 'SUCCESSFUL' }).sort({ createdAt: -1 });
+
+        const totalSpent = orders.reduce((sum, ord) => sum + (ord.amount || 0), 0);
+        
+        // Count by unique Kit sets (productId)
+        const distinctKitsBought = new Set(qrs.map(q => q.productId || q.copyCode));
+        const activeKitsSet = new Set(qrs.filter((q) => q.status === 'ACTIVE').map(q => q.productId || q.copyCode));
+        const soldKitsSet = new Set(qrs.filter((q) => q.status === 'SOLD').map(q => q.productId || q.copyCode));
+
         return {
           ...u.toObject(),
           vehicles,
           qrs,
-          wallet
+          wallet,
+          orders,
+          totalSpent,
+          totalQRsBought: distinctKitsBought.size,
+          activeQRsCount: activeKitsSet.size,
+          soldQRsCount: soldKitsSet.size
         };
       })
     );
 
     res.json({ success: true, users: userDetails });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select('-password');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // 1. Vehicles
+    const vehicles = await Vehicle.find({ userId: user._id }).sort({ createdAt: -1 });
+
+    // 2. All QRs linked to this user
+    const allUserQRs = await QRCode.find({ userId: user._id, isDeleted: { $ne: true } })
+      .populate('vehicleId')
+      .populate('qrTypeId')
+      .sort({ createdAt: -1 });
+
+    // Group into Unique Kit Sets
+    const kitMap = {};
+    for (const q of allUserQRs) {
+      if (!kitMap[q.productId]) {
+        kitMap[q.productId] = {
+          productId: q.productId,
+          batchId: q.batchId,
+          qrFor: q.qrFor || 'Car',
+          qrType: q.qrType || 'PHYSICAL',
+          status: q.status,
+          copies: [],
+          vehicle: q.vehicleId ? {
+            _id: q.vehicleId._id,
+            vehicleName: q.vehicleId.vehicleName,
+            vehicleBrand: q.vehicleId.vehicleBrand,
+            vehicleNumber: q.vehicleId.vehicleNumber,
+            emergencyContacts: q.vehicleId.emergencyContacts || []
+          } : null,
+          activationDate: q.activationDate,
+          expiryDate: q.expiryDate,
+          createdAt: q.createdAt,
+          primaryQRId: q._id,
+          wallet: null,
+          payments: []
+        };
+      }
+      kitMap[q.productId].copies.push({
+        _id: q._id,
+        copyCode: q.copyCode,
+        publicToken: q.publicToken,
+        status: q.status
+      });
+
+      if (q.status === 'ACTIVE') kitMap[q.productId].status = 'ACTIVE';
+      else if (q.status === 'SOLD' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'SOLD';
+      else if (q.status === 'EXPIRED' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'EXPIRED';
+    }
+
+    // Attach QuotaWallet and Subscription to each unique kit
+    for (const prodId of Object.keys(kitMap)) {
+      const kit = kitMap[prodId];
+      const wallet = await QuotaWallet.findOne({ qrId: kit.primaryQRId });
+      kit.wallet = wallet ? {
+        callBalance: wallet.callBalance,
+        messageBalance: wallet.messageBalance,
+        totalCallsUsed: wallet.totalCallsUsed,
+        totalMessagesUsed: wallet.totalMessagesUsed,
+        totalCallsPurchased: wallet.totalCallsPurchased,
+        totalMessagesPurchased: wallet.totalMessagesPurchased
+      } : null;
+    }
+
+    const uniqueKits = Object.values(kitMap);
+
+    // 3. Orders & Payments
+    const orders = await Order.find({
+      $or: [{ userId: user._id }, { customerPhone: user.phone }, { customerEmail: user.email }]
+    }).sort({ createdAt: -1 });
+
+    const payments = await Payment.find({ userId: user._id }).sort({ createdAt: -1 });
+
+    // Link payments to specific kits if metadata matches
+    for (const kit of uniqueKits) {
+      const copyCodes = kit.copies.map(c => c.copyCode);
+      kit.payments = payments.filter(p => {
+        const metaQrCodes = p.metadata?.qrCodes || [];
+        const matchesCode = metaQrCodes.some(code => copyCodes.includes(code));
+        const matchesProdId = p.metadata?.productId === kit.productId;
+        return matchesCode || matchesProdId;
+      });
+      kit.totalPaymentsCount = kit.payments.length;
+      kit.totalPaidAmount = kit.payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    }
+
+    const totalSpent = payments.filter(p => p.status === 'SUCCESSFUL').reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    // 4. Quota Transaction Ledger & History (Grouped by Kit Set productId)
+    const rawQuotaLedger = await QuotaTransaction.find({ userId: user._id })
+      .populate('qrId', 'productId copyCode')
+      .sort({ createdAt: -1 });
+
+    const seenKitLogs = new Set();
+    const quotaLedger = [];
+    for (const q of rawQuotaLedger) {
+      const prodId = q.productId || q.qrId?.productId || q.qrId?.copyCode?.replace(/C\d+$/, '') || 'Kit';
+      const timeWindow = new Date(q.createdAt).toISOString().slice(0, 16); // up to minute
+      const key = `${prodId}_${timeWindow}_${q.category}_${q.quantity}_${q.type}`;
+      if (!seenKitLogs.has(key)) {
+        seenKitLogs.add(key);
+        quotaLedger.push({
+          ...q.toObject(),
+          kitProductId: prodId
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      user,
+      stats: {
+        totalKits: uniqueKits.length,
+        activeKits: uniqueKits.filter(k => k.status === 'ACTIVE').length,
+        inStockKits: uniqueKits.filter(k => k.status === 'IN STOCK').length,
+        totalVehicles: vehicles.length,
+        totalOrders: orders.length,
+        totalPayments: payments.length,
+        totalSpent
+      },
+      kits: uniqueKits,
+      vehicles,
+      orders,
+      payments,
+      quotaLedger
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const adminAddAddonQuota = async (req, res) => {
+  try {
+    const { qrId, calls = 0, messages = 0, validityDays = 0, source = 'ADMIN_GRANT', amountPaid = 0, paymentId, notes, reason } = req.body;
+
+    const qr = await QRCode.findById(qrId);
+    if (!qr) {
+      return res.status(404).json({ success: false, message: 'QR Code not found' });
+    }
+
+    const siblingQRs = await QRCode.find({ productId: qr.productId });
+    const siblingIds = siblingQRs.map(s => s._id);
+
+    let wallet = await QuotaWallet.findOne({ qrId: qr._id });
+    if (!wallet) {
+      wallet = await QuotaWallet.create({
+        userId: qr.userId,
+        qrId: qr._id,
+        callBalance: 0,
+        messageBalance: 0
+      });
+    }
+
+    const numCalls = Number(calls) || 0;
+    const numMessages = Number(messages) || 0;
+    const numDays = Number(validityDays) || 0;
+
+    wallet.callBalance += numCalls;
+    wallet.messageBalance += numMessages;
+    wallet.totalCallsPurchased += numCalls;
+    wallet.totalMessagesPurchased += numMessages;
+    await wallet.save();
+
+    await QuotaWallet.updateMany(
+      { qrId: { $in: siblingIds } },
+      {
+        callBalance: wallet.callBalance,
+        messageBalance: wallet.messageBalance,
+        totalCallsPurchased: wallet.totalCallsPurchased,
+        totalMessagesPurchased: wallet.totalMessagesPurchased
+      }
+    );
+
+    // Extend validity if days specified
+    if (numDays > 0) {
+      const currentExpiry = qr.expiryDate && new Date(qr.expiryDate) > new Date() ? new Date(qr.expiryDate) : new Date();
+      const newExpiry = new Date(currentExpiry.getTime() + numDays * 24 * 60 * 60 * 1000);
+      await QRCode.updateMany(
+        { productId: qr.productId },
+        { expiryDate: newExpiry, status: 'ACTIVE' }
+      );
+    }
+
+    // Log call transaction
+    if (numCalls > 0) {
+      await QuotaTransaction.create({
+        userId: qr.userId,
+        qrId: qr._id,
+        type: 'CREDIT',
+        category: 'CALL',
+        quantity: numCalls,
+        balanceAfter: wallet.callBalance,
+        source: source || 'ADMIN_GRANT',
+        amountPaid: Number(amountPaid) || 0,
+        paymentId: paymentId || (Number(amountPaid) > 0 ? `CASH_ADMIN_${Date.now()}` : undefined),
+        performedBy: 'Super Admin',
+        reason: reason || (source === 'PURCHASE_ADDON' ? `Purchased +${numCalls} Extra Calls` : `Admin Grant: +${numCalls} Calls`),
+        notes
+      });
+    }
+
+    // Log message transaction
+    if (numMessages > 0) {
+      await QuotaTransaction.create({
+        userId: qr.userId,
+        qrId: qr._id,
+        type: 'CREDIT',
+        category: 'MESSAGE',
+        quantity: numMessages,
+        balanceAfter: wallet.messageBalance,
+        source: source || 'ADMIN_GRANT',
+        amountPaid: numCalls === 0 ? (Number(amountPaid) || 0) : 0,
+        paymentId: paymentId || (Number(amountPaid) > 0 ? `CASH_ADMIN_${Date.now()}` : undefined),
+        performedBy: 'Super Admin',
+        reason: reason || (source === 'PURCHASE_ADDON' ? `Purchased +${numMessages} Extra Messages` : `Admin Grant: +${numMessages} Messages`),
+        notes
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `🎉 Successfully credited +${numCalls} Calls and +${numMessages} Messages!`,
+      wallet
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -596,7 +1089,25 @@ export const updateUserStatus = async (req, res) => {
 
 export const getVehicles = async (req, res) => {
   try {
-    const vehicles = await Vehicle.find().populate('userId', 'name phone status').sort({ createdAt: -1 });
+    const rawVehicles = await Vehicle.find().populate('userId', 'name phone email address status').sort({ createdAt: -1 });
+    const vehicles = await Promise.all(
+      rawVehicles.map(async (v) => {
+        const qrs = await QRCode.find({ vehicleId: v._id, isDeleted: { $ne: true } });
+        return {
+          ...v.toObject(),
+          qrs: qrs.map(q => ({
+            _id: q._id,
+            productId: q.productId,
+            copyCode: q.copyCode,
+            publicToken: q.publicToken,
+            qrType: q.qrType,
+            qrFor: q.qrFor,
+            status: q.status,
+            expiryDate: q.expiryDate
+          }))
+        };
+      })
+    );
     res.json({ success: true, vehicles });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -621,17 +1132,6 @@ export const getEmergencyAlerts = async (req, res) => {
 export const getPackages = async (req, res) => {
   try {
     const showDeleted = req.query.showDeleted === 'true';
-    const totalEver = await QuotaPackage.countDocuments();
-    if (totalEver === 0) {
-      await QuotaPackage.insertMany([
-        { name: '10 Extra Calls', category: 'CALL', quantity: 10, price: 49 },
-        { name: '25 Extra Calls Booster', category: 'CALL', quantity: 25, price: 99 },
-        { name: '50 Extra Calls Mega Pack', category: 'CALL', quantity: 50, price: 179 },
-        { name: '20 Extra Messages Top-Up', category: 'MESSAGE', quantity: 20, price: 29 },
-        { name: '50 Extra Messages Pack', category: 'MESSAGE', quantity: 50, price: 59 },
-        { name: '100 Extra Messages Mega Pack', category: 'MESSAGE', quantity: 100, price: 99 }
-      ]);
-    }
     const filter = showDeleted ? { isDeleted: true } : { isDeleted: { $ne: true } };
     const packages = await QuotaPackage.find(filter).sort({ price: 1 });
     res.json({ success: true, packages });
@@ -715,21 +1215,9 @@ export const restorePackage = async (req, res) => {
 // ==========================================
 // 9. DYNAMIC SCAN REASONS (CRUD with SOFT DELETE & RESTORE)
 // ==========================================
-const DEFAULT_REASONS = [
-  { title: 'Wrong parking', iconKey: 'ban', color: 'red', isOtherType: false, order: 1 },
-  { title: 'Window or gate unlocked', iconKey: 'unlock', color: 'green', isOtherType: false, order: 2 },
-  { title: 'Car is going', iconKey: 'car', color: 'blue', isOtherType: false, order: 3 },
-  { title: 'Accident', iconKey: 'alert', color: 'rose', isOtherType: false, order: 4 },
-  { title: 'Other (Please specify)', iconKey: 'other', color: 'purple', isOtherType: true, order: 5 }
-];
-
 export const getScanReasons = async (req, res) => {
   try {
     const showDeleted = req.query.showDeleted === 'true';
-    const totalEver = await ScanReason.countDocuments();
-    if (totalEver === 0) {
-      await ScanReason.insertMany(DEFAULT_REASONS);
-    }
     const filter = showDeleted ? { isDeleted: true } : { isDeleted: { $ne: true } };
     const reasons = await ScanReason.find(filter).sort({ order: 1, createdAt: 1 });
     res.json({ success: true, reasons });
@@ -881,6 +1369,405 @@ export const updateSettings = async (req, res) => {
       success: true,
       message: 'System settings updated successfully! Note: Existing active users and sold QRs keep their current balances.',
       settings
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// 11. PRODUCTS & STORE PRICING CRUD
+// ==========================================
+export const uploadProductImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No image file uploaded' });
+    }
+    const result = await uploadToCloudinary(req.file.buffer, 'safedrive/products');
+    res.json({
+      success: true,
+      imageUrl: result.secure_url,
+      imagePublicId: result.public_id
+    });
+  } catch (error) {
+    console.error('Image Upload Controller Error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Image upload failed' });
+  }
+};
+
+export const getAdminProducts = async (req, res) => {
+  try {
+    const products = await Product.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 });
+    res.json({ success: true, products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const createAdminProduct = async (req, res) => {
+  try {
+    const {
+      name,
+      title,
+      description = '',
+      imageUrl = '',
+      imagePublicId = '',
+      price,
+      originalPrice = 0,
+      discount = 0,
+      qrType = 'PHYSICAL',
+      initialCalls = 10,
+      initialMessages = 20,
+      validityDays = 365,
+      renewalAmount = 199,
+      features
+    } = req.body;
+
+    const prodTitle = (title || name || '').trim();
+    if (!prodTitle || price === undefined || price === null || price === '') {
+      return res.status(400).json({ success: false, message: 'Product Title and Price are required.' });
+    }
+
+    const cleanPrice = Number(price);
+    const cleanOriginalPrice = originalPrice ? Number(originalPrice) : 0;
+    const cleanDiscount = discount ? Number(discount) : (cleanOriginalPrice > cleanPrice ? cleanOriginalPrice - cleanPrice : 0);
+    const discountPercent = cleanOriginalPrice > cleanPrice ? Math.round(((cleanOriginalPrice - cleanPrice) / cleanOriginalPrice) * 100) : 0;
+
+    const product = await Product.create({
+      name: prodTitle,
+      title: prodTitle,
+      description: description.trim(),
+      imageUrl: imageUrl || '',
+      imagePublicId: imagePublicId || '',
+      price: cleanPrice,
+      originalPrice: cleanOriginalPrice,
+      discount: cleanDiscount,
+      discountPercent,
+      qrType: (qrType || 'PHYSICAL').toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL',
+      initialCalls: Number(initialCalls) || 0,
+      initialMessages: Number(initialMessages) || 0,
+      validityDays: Number(validityDays) || 365,
+      renewalAmount: Number(renewalAmount) || 199,
+      features: Array.isArray(features) && features.length ? features : [
+        'Instant Masked Calling to Owner',
+        'WhatsApp Emergency Direct Connect',
+        'Anti-Harassment Plate Verification',
+        'Cloud Protection Validity'
+      ]
+    });
+
+    res.json({ success: true, message: 'Product created successfully', product });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateAdminProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    if (updates.name || updates.title) {
+      const prodTitle = (updates.title || updates.name).trim();
+      updates.name = prodTitle;
+      updates.title = prodTitle;
+    }
+    if (updates.price !== undefined) updates.price = Number(updates.price);
+    if (updates.originalPrice !== undefined) updates.originalPrice = Number(updates.originalPrice);
+    if (updates.initialCalls !== undefined) updates.initialCalls = Number(updates.initialCalls);
+    if (updates.initialMessages !== undefined) updates.initialMessages = Number(updates.initialMessages);
+    if (updates.validityDays !== undefined) updates.validityDays = Number(updates.validityDays);
+    if (updates.renewalAmount !== undefined) updates.renewalAmount = Number(updates.renewalAmount);
+    if (updates.qrType) updates.qrType = updates.qrType.toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+
+    if (updates.originalPrice && updates.price && updates.originalPrice > updates.price) {
+      updates.discount = updates.originalPrice - updates.price;
+      updates.discountPercent = Math.round(((updates.originalPrice - updates.price) / updates.originalPrice) * 100);
+    }
+
+    const product = await Product.findByIdAndUpdate(id, updates, { new: true });
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    res.json({ success: true, message: 'Product updated successfully', product });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getAdminProductById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    // Fetch orders where this product was purchased
+    const orders = await Order.find({
+      $or: [{ productId: product._id }, { productType: product.name }]
+    }).populate('userId', 'name phone email').sort({ createdAt: -1 }).limit(100);
+
+    res.json({
+      success: true,
+      product,
+      stats: {
+        soldKits: product.soldCount || orders.length,
+        totalRevenue: product.totalRevenue || orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0)
+      },
+      orders
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteAdminProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    product.isDeleted = true;
+    product.deletedAt = new Date();
+    await product.save();
+    res.json({ success: true, message: 'Product deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// 12. QR FORMATS (QR TYPE: PHYSICAL VS DIGITAL) CRUD
+// ==========================================
+export const getQRFormats = async (req, res) => {
+  try {
+    const showDeleted = req.query.showDeleted === 'true';
+    const filter = showDeleted ? { isDeleted: true } : { isDeleted: { $ne: true } };
+    const formats = await QRFormat.find(filter).sort({ createdAt: 1 });
+    res.json({ success: true, formats });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const createQRFormat = async (req, res) => {
+  try {
+    const { name, type = 'PHYSICAL', description = '' } = req.body;
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'QR Type name is required' });
+    }
+    const format = await QRFormat.create({
+      name: name.trim(),
+      type: (type || 'PHYSICAL').toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL',
+      description: description.trim()
+    });
+    res.json({ success: true, message: 'QR Type created successfully', format });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateQRFormat = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, type, description, isActive } = req.body;
+    const format = await QRFormat.findById(id);
+    if (!format || format.isDeleted) {
+      return res.status(404).json({ success: false, message: 'QR Type not found' });
+    }
+    if (name) format.name = name.trim();
+    if (type) format.type = type.toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+    if (description !== undefined) format.description = description.trim();
+    if (isActive !== undefined) format.isActive = isActive;
+    await format.save();
+    res.json({ success: true, message: 'QR Type updated successfully', format });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteQRFormat = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const format = await QRFormat.findById(id);
+    if (!format) {
+      return res.status(404).json({ success: false, message: 'QR Type not found' });
+    }
+    format.isDeleted = true;
+    format.deletedAt = new Date();
+    await format.save();
+    res.json({ success: true, message: 'QR Type soft-deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const restoreQRFormat = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const format = await QRFormat.findById(id);
+    if (!format) {
+      return res.status(404).json({ success: false, message: 'QR Type not found' });
+    }
+    format.isDeleted = false;
+    format.deletedAt = null;
+    await format.save();
+    res.json({ success: true, message: 'QR Type restored successfully', format });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// 14. ADMIN CUSTOMER ORDERS MANAGEMENT
+// ==========================================
+export const getAdminOrders = async (req, res) => {
+  try {
+    const { status, type, search, page = 1, limit = 50 } = req.query;
+    const query = {};
+
+    if (status && status !== 'ALL') {
+      query.deliveryStatus = status;
+    }
+    if (type && type !== 'ALL') {
+      query.productType = type;
+    }
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { orderNumber: searchRegex },
+        { customerName: searchRegex },
+        { customerEmail: searchRegex },
+        { customerPhone: searchRegex },
+        { claimedProductId: searchRegex },
+        { deliveryAddress: searchRegex }
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const totalOrders = await Order.countDocuments(query);
+    const orders = await Order.find(query)
+      .populate('userId', 'name phone email')
+      .populate('allocatedQRIds', 'copyCode publicToken status')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    res.json({
+      success: true,
+      orders,
+      pagination: {
+        total: totalOrders,
+        page: parseInt(page),
+        pages: Math.ceil(totalOrders / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateAdminOrderStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deliveryStatus, courierPartner, trackingNumber, adminNotes } = req.body;
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (deliveryStatus) {
+      order.deliveryStatus = deliveryStatus;
+      if (deliveryStatus === 'DISPATCHED' || deliveryStatus === 'SHIPPED') {
+        order.dispatchDate = order.dispatchDate || new Date();
+      } else if (deliveryStatus === 'DELIVERED') {
+        order.deliveryDate = order.deliveryDate || new Date();
+      }
+    }
+    if (courierPartner !== undefined) order.courierPartner = courierPartner.trim();
+    if (trackingNumber !== undefined) order.trackingNumber = trackingNumber.trim();
+    if (adminNotes !== undefined) order.adminNotes = adminNotes.trim();
+
+    await order.save();
+    res.json({ success: true, message: `Order marked as ${order.deliveryStatus}`, order });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getAdminOrderStats = async (req, res) => {
+  try {
+    const totalOrders = await Order.countDocuments();
+    const physicalOrders = await Order.countDocuments({ productType: 'PHYSICAL' });
+    const digitalOrders = await Order.countDocuments({ productType: 'DIGITAL' });
+    const pendingDispatch = await Order.countDocuments({ productType: 'PHYSICAL', deliveryStatus: 'PROCESSING' });
+    const dispatched = await Order.countDocuments({ deliveryStatus: { $in: ['DISPATCHED', 'SHIPPED'] } });
+    const delivered = await Order.countDocuments({ deliveryStatus: 'DELIVERED' });
+    const claimedQRs = await Order.countDocuments({ isClaimed: true });
+
+    // Revenue Aggregation
+    const revenueAgg = await Order.aggregate([
+      { $match: { paymentStatus: 'PAID' } },
+      { $group: { _id: null, totalRevenue: { $sum: '$amount' } } }
+    ]);
+    const totalRevenue = revenueAgg.length > 0 ? revenueAgg[0].totalRevenue : 0;
+
+    res.json({
+      success: true,
+      stats: {
+        totalOrders,
+        physicalOrders,
+        digitalOrders,
+        pendingDispatch,
+        dispatched,
+        delivered,
+        claimedQRs,
+        totalRevenue
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// 12. SCAN LOGS & HISTORY
+// ==========================================
+export const getScanLogs = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, eventType, search } = req.query;
+    const filter = {};
+
+    if (eventType && eventType !== 'ALL') {
+      filter.eventType = eventType;
+    }
+
+    if (search) {
+      filter.$or = [
+        { copyCode: { $regex: search, $options: 'i' } },
+        { productId: { $regex: search, $options: 'i' } },
+        { vehicleNumber: { $regex: search, $options: 'i' } },
+        { ipAddress: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const total = await ScanLog.countDocuments(filter);
+    const logs = await ScanLog.find(filter)
+      .populate('userId', 'name phone')
+      .populate('vehicleId', 'vehicleBrand vehicleName vehicleNumber')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit, 10));
+
+    res.json({
+      success: true,
+      total,
+      page: parseInt(page, 10),
+      pages: Math.ceil(total / limit),
+      logs
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
