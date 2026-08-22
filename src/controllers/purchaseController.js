@@ -295,7 +295,7 @@ export const verifyAndAllocateQR = async (req, res) => {
 
     // 5. DIGITAL vs PHYSICAL ALLOCATION
     if (isDigital) {
-      // Case A: DIGITAL PRODUCT -> INSTANT ACTIVE QR CODE ALLOCATION
+      // Case A: DIGITAL PRODUCT -> INSTANT DIGITAL PASS ALLOCATION
       const qrQuery = {
         qrType: 'DIGITAL',
         status: 'IN STOCK',
@@ -352,7 +352,7 @@ export const verifyAndAllocateQR = async (req, res) => {
         allocatedQRs = await QRCode.insertMany(newBatchItems);
       }
 
-      // Initialize Quota Wallet for each digital QR
+      // Initialize Quota Wallet for digital QR
       for (const qr of allocatedQRs) {
         await QuotaWallet.findOneAndUpdate(
           { qrId: qr._id },
@@ -368,58 +368,11 @@ export const verifyAndAllocateQR = async (req, res) => {
         );
       }
     } else {
-      // Case B: PHYSICAL PRODUCT -> ALLOCATE PRE-GENERATED OR AUTO-GENERATE ON DEMAND
-      const qrQuery = {
-        qrType: 'PHYSICAL',
-        status: 'IN STOCK',
-        isDeleted: { $ne: true }
-      };
-
-      let inStockQR = await QRCode.findOne(qrQuery);
-
-      if (inStockQR) {
-        const targetProductId = inStockQR.productId;
-        await QRCode.updateMany(
-          { productId: targetProductId },
-          {
-            status: 'SOLD',
-            userId: user._id,
-            qrFor,
-            qrType: 'PHYSICAL',
-            initialCalls: product?.initialCalls || 10,
-            initialMessages: product?.initialMessages || 20,
-            validityDays: product?.validityDays || 365,
-            renewalAmount: product?.renewalAmount || 199
-          }
-        );
-        allocatedQRs = await QRCode.find({ productId: targetProductId });
-      } else {
-        // Auto-generate Physical Sticker Kit in SOLD status for courier fulfillment
-        const nextNum = await calculateNextStartNumber();
-        const newProductId = `SD${String(nextNum).padStart(3, '0')}`;
-
-        const newBatchItems = [];
-        for (let c = 1; c <= copiesPerSet; c++) {
-          const copyCode = `${newProductId}C${c}`;
-          const publicToken = crypto.randomBytes(16).toString('hex');
-          newBatchItems.push({
-            productId: newProductId,
-            batchId: 'STORE-PHYSICAL',
-            copyCode,
-            publicToken,
-            status: 'SOLD',
-            userId: user._id,
-            qrFor,
-            qrType: 'PHYSICAL',
-            qrTypeId: qrTypeDoc?._id || null,
-            initialCalls: product?.initialCalls || 10,
-            initialMessages: product?.initialMessages || 20,
-            validityDays: product?.validityDays || 365,
-            renewalAmount: product?.renewalAmount || 199
-          });
-        }
-        allocatedQRs = await QRCode.insertMany(newBatchItems);
-      }
+      // Case B: PHYSICAL PRODUCT
+      // In physical orders, the physical reflective sticker kit is shipped to the customer's delivery address.
+      // The physical QR stickers remain unassigned until the customer receives the parcel and scans the physical QR code
+      // to complete first-time vehicle registration (/api/public/qr/:token/register).
+      allocatedQRs = [];
     }
 
     // 6. Record Order in DB
