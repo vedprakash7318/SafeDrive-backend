@@ -9,6 +9,7 @@ import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import QuotaPackage from '../models/QuotaPackage.js';
 import SystemSetting from '../models/SystemSetting.js';
+import AuditLog from '../models/AuditLog.js';
 import crypto from 'crypto';
 
 export const getDashboard = async (req, res) => {
@@ -21,10 +22,36 @@ export const getDashboard = async (req, res) => {
     const wallets = await QuotaWallet.find({ userId });
     const subscriptions = await Subscription.find({ userId }).sort({ createdAt: -1 });
 
-    const totalCallsRemaining = wallets.reduce((acc, w) => acc + (w.callBalance || 0), 0);
-    const totalMessagesRemaining = wallets.reduce((acc, w) => acc + (w.messageBalance || 0), 0);
-    const totalCallsUsed = wallets.reduce((acc, w) => acc + (w.totalCallsUsed || 0), 0);
-    const totalMessagesUsed = wallets.reduce((acc, w) => acc + (w.totalMessagesUsed || 0), 0);
+    // Group wallets by unique productId (Kit) to prevent multi-copy duplication (e.g. SD005C1 + SD005C2)
+    const productWalletMap = new Map();
+    for (const qr of qrs) {
+      if (qr.productId && !productWalletMap.has(qr.productId)) {
+        const wallet = wallets.find(w => w.qrId?.toString() === qr._id?.toString());
+        if (wallet) {
+          productWalletMap.set(qr.productId, wallet);
+        }
+      }
+    }
+
+    let totalCallsRemaining = 0;
+    let totalMessagesRemaining = 0;
+    let totalCallsUsed = 0;
+    let totalMessagesUsed = 0;
+
+    if (productWalletMap.size > 0) {
+      for (const wallet of productWalletMap.values()) {
+        totalCallsRemaining += (wallet.callBalance || 0);
+        totalMessagesRemaining += (wallet.messageBalance || 0);
+        totalCallsUsed += (wallet.totalCallsUsed || 0);
+        totalMessagesUsed += (wallet.totalMessagesUsed || 0);
+      }
+    } else if (wallets.length > 0) {
+      // Fallback for standalone wallets
+      totalCallsRemaining = wallets[0].callBalance || 0;
+      totalMessagesRemaining = wallets[0].messageBalance || 0;
+      totalCallsUsed = wallets[0].totalCallsUsed || 0;
+      totalMessagesUsed = wallets[0].totalMessagesUsed || 0;
+    }
 
     res.json({
       success: true,
@@ -64,7 +91,7 @@ export const buyQuota = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Package not found' });
     }
 
-    // Mock payment verification
+    // Payment verification
     const orderId = `ORD_${Date.now()}`;
     const paymentId = `PAY_${crypto.randomBytes(6).toString('hex')}`;
 
@@ -75,7 +102,7 @@ export const buyQuota = async (req, res) => {
       amount: pkg.price,
       purpose: pkg.category === 'CALL' ? 'CALL_PACKAGE' : 'MESSAGE_PACKAGE',
       status: 'SUCCESSFUL',
-      metadata: { qrId, packageName: pkg.name, quantity: pkg.quantity }
+      metadata: { qrId, productId: qr.productId, packageName: pkg.name, quantity: pkg.quantity }
     });
 
     // Atomic update wallet
@@ -104,9 +131,11 @@ export const buyQuota = async (req, res) => {
         { callBalance: wallet.callBalance, totalCallsPurchased: wallet.totalCallsPurchased }
       );
 
+      // Record Quota Transaction once for the Product Kit
       await QuotaTransaction.create({
         userId,
         qrId: qr._id,
+        productId: qr.productId,
         type: 'CREDIT',
         category: 'CALL',
         quantity: pkg.quantity,
@@ -117,7 +146,7 @@ export const buyQuota = async (req, res) => {
         orderId,
         packageName: pkg.name,
         performedBy: 'Customer (Self-Purchase)',
-        reason: `Purchased Add-On: ${pkg.name} (₹${pkg.price})`
+        reason: `Purchased Add-On: ${pkg.name} (+${pkg.quantity} Calls for ₹${pkg.price})`
       });
     } else {
       wallet.messageBalance += pkg.quantity;
@@ -130,9 +159,11 @@ export const buyQuota = async (req, res) => {
         { messageBalance: wallet.messageBalance, totalMessagesPurchased: wallet.totalMessagesPurchased }
       );
 
+      // Record Quota Transaction once for the Product Kit
       await QuotaTransaction.create({
         userId,
         qrId: qr._id,
+        productId: qr.productId,
         type: 'CREDIT',
         category: 'MESSAGE',
         quantity: pkg.quantity,
@@ -143,9 +174,17 @@ export const buyQuota = async (req, res) => {
         orderId,
         packageName: pkg.name,
         performedBy: 'Customer (Self-Purchase)',
-        reason: `Purchased Add-On: ${pkg.name} (₹${pkg.price})`
+        reason: `Purchased Add-On: ${pkg.name} (+${pkg.quantity} SMS for ₹${pkg.price})`
       });
     }
+
+    // Audit Log for purchase
+    AuditLog.create({
+      action: 'BUY_QUOTA_PACKAGE',
+      targetId: qr.productId,
+      newValue: { package: pkg.name, quantity: pkg.quantity, price: pkg.price },
+      ip: req.ip || ''
+    }).catch(() => {});
 
     res.json({
       success: true,
@@ -177,7 +216,7 @@ export const renewSubscription = async (req, res) => {
       amount: renewalPrice,
       purpose: 'RENEWAL',
       status: 'SUCCESSFUL',
-      metadata: { qrId, validityDaysAdded: 365 }
+      metadata: { qrId, productId: qr.productId, validityDaysAdded: 365 }
     });
 
     const now = new Date();
@@ -204,6 +243,7 @@ export const renewSubscription = async (req, res) => {
     const bonusCalls = 10;
     const bonusMessages = 20;
 
+    let primaryWallet = null;
     for (const item of siblingQRs) {
       let wallet = await QuotaWallet.findOne({ qrId: item._id });
       if (!wallet) {
@@ -219,32 +259,51 @@ export const renewSubscription = async (req, res) => {
       wallet.messageBalance += bonusMessages;
       await wallet.save();
 
-      await QuotaTransaction.create({
-        userId,
-        qrId: item._id,
-        type: 'CREDIT',
-        category: 'CALL',
-        quantity: bonusCalls,
-        balanceAfter: wallet.callBalance,
-        reason: `Subscription Renewal Bonus Calls (${qr.productId})`
-      });
-
-      await QuotaTransaction.create({
-        userId,
-        qrId: item._id,
-        type: 'CREDIT',
-        category: 'MESSAGE',
-        quantity: bonusMessages,
-        balanceAfter: wallet.messageBalance,
-        reason: `Subscription Renewal Bonus Messages (${qr.productId})`
-      });
+      if (!primaryWallet) {
+        primaryWallet = wallet;
+      }
     }
+
+    // Create Ledger Quota Transactions ONCE for the entire Kit Set
+    await QuotaTransaction.create({
+      userId,
+      qrId: qr._id,
+      productId: qr.productId,
+      type: 'CREDIT',
+      category: 'CALL',
+      quantity: bonusCalls,
+      balanceAfter: primaryWallet?.callBalance || bonusCalls,
+      source: 'RENEWAL',
+      performedBy: 'Customer (Renewal)',
+      reason: `Subscription Renewal Bonus Calls (${qr.productId})`
+    });
+
+    await QuotaTransaction.create({
+      userId,
+      qrId: qr._id,
+      productId: qr.productId,
+      type: 'CREDIT',
+      category: 'MESSAGE',
+      quantity: bonusMessages,
+      balanceAfter: primaryWallet?.messageBalance || bonusMessages,
+      source: 'RENEWAL',
+      performedBy: 'Customer (Renewal)',
+      reason: `Subscription Renewal Bonus Messages (${qr.productId})`
+    });
+
+    // Audit Log
+    AuditLog.create({
+      action: 'RENEW_SUBSCRIPTION',
+      targetId: qr.productId,
+      newValue: { newExpiry, renewalPrice, bonusCalls, bonusMessages },
+      ip: req.ip || ''
+    }).catch(() => {});
 
     res.json({
       success: true,
       message: 'Subscription successfully renewed! Old quota preserved + bonus added.',
-      expiryDate: qr.expiryDate,
-      wallet
+      expiryDate: newExpiry,
+      wallet: primaryWallet
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -338,14 +397,62 @@ export const activatePurchasedQR = async (req, res) => {
 
     // Initialize Quota Wallet
     let wallet = await QuotaWallet.findOne({ qrId: targetQR._id });
+    const starterCalls = targetQR.initialCalls || 10;
+    const starterMsgs = targetQR.initialMessages || 20;
+
     if (!wallet) {
       wallet = await QuotaWallet.create({
         userId,
         qrId: targetQR._id,
-        callBalance: targetQR.initialCalls || 10,
-        messageBalance: targetQR.initialMessages || 20
+        callBalance: starterCalls,
+        messageBalance: starterMsgs,
+        totalCallsPurchased: starterCalls,
+        totalMessagesPurchased: starterMsgs
       });
     }
+
+    // Sync sibling copies
+    const siblingQRs = await QRCode.find({ productId: targetQR.productId });
+    const siblingIds = siblingQRs.map(s => s._id);
+    await QuotaWallet.updateMany(
+      { qrId: { $in: siblingIds } },
+      {
+        userId,
+        callBalance: wallet.callBalance,
+        messageBalance: wallet.messageBalance,
+        totalCallsPurchased: wallet.totalCallsPurchased,
+        totalMessagesPurchased: wallet.totalMessagesPurchased
+      }
+    );
+
+    // Record Ledger Quota Transactions ONCE for the entire Kit Set (productId)
+    await QuotaTransaction.create({
+      userId,
+      qrId: targetQR._id,
+      productId: targetQR.productId,
+      type: 'CREDIT',
+      category: 'CALL',
+      quantity: starterCalls,
+      balanceAfter: starterCalls,
+      source: 'INITIAL_FREE',
+      amountPaid: 0,
+      performedBy: 'System (Kit Activation)',
+      reason: `Initial Starter Calling Quota (${targetQR.productId})`
+    });
+
+    await QuotaTransaction.create({
+      userId,
+      qrId: targetQR._id,
+      productId: targetQR.productId,
+      type: 'CREDIT',
+      category: 'MESSAGE',
+      quantity: starterMsgs,
+      balanceAfter: starterMsgs,
+      source: 'INITIAL_FREE',
+      amountPaid: 0,
+      performedBy: 'System (Kit Activation)',
+      reason: `Initial Starter SMS Quota (${targetQR.productId})`
+    });
 
     // Subscription Record
     await Subscription.create({
@@ -356,6 +463,14 @@ export const activatePurchasedQR = async (req, res) => {
       price: targetQR.renewalAmount || 199,
       status: 'ACTIVE'
     });
+
+    // Audit Log
+    AuditLog.create({
+      action: 'ACTIVATE_QR_KIT',
+      targetId: targetQR.productId,
+      newValue: { vehicleNumber: cleanPlate, vehicleName: vehicle.vehicleName, copies: siblingQRs.length },
+      ip: req.ip || ''
+    }).catch(() => {});
 
     res.json({
       success: true,

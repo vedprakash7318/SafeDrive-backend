@@ -9,6 +9,7 @@ import ScanLog from '../models/ScanLog.js';
 import SystemSetting from '../models/SystemSetting.js';
 import ScanReason from '../models/ScanReason.js';
 import Order from '../models/Order.js';
+import AuditLog from '../models/AuditLog.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
@@ -398,6 +399,20 @@ export const registerQR = async (req, res) => {
       }
     );
 
+    // Record Audit Log for registration
+    AuditLog.create({
+      action: 'PUBLIC_QR_REGISTRATION',
+      targetId: qr.productId,
+      newValue: {
+        userName: user.name,
+        userPhone: user.phone,
+        vehiclePlate: vehicle.vehicleNumber,
+        vehicleName: vehicle.vehicleName,
+        totalCopies: siblingQRs.length
+      },
+      ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''
+    }).catch(() => {});
+
     // Generate token for auto-login
     const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET || 'supersecretjwtkey_replace_in_prod', {
       expiresIn: '30d'
@@ -766,7 +781,8 @@ export const claimPhysicalQR = async (req, res) => {
 };
 
 /**
- * Send OTP for First-Time QR Activation (Only for registered users)
+ * Send OTP for First-Time QR Activation
+ * Works for any 10-digit mobile number with fixed test OTP (123456)
  */
 export const sendActivationOTP = async (req, res) => {
   try {
@@ -786,14 +802,7 @@ export const sendActivationOTP = async (req, res) => {
       ]
     });
 
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ User not found with this mobile number. Please enter your registered account mobile number or purchase a kit first.'
-      });
-    }
-
-    if (existingUser.status === 'SUSPENDED') {
+    if (existingUser && existingUser.status === 'SUSPENDED') {
       return res.status(403).json({
         success: false,
         message: 'Account is suspended. Please contact administrator.'
@@ -802,17 +811,17 @@ export const sendActivationOTP = async (req, res) => {
 
     res.json({
       success: true,
-      message: `OTP sent to registered mobile +91 ${cleanPhone}`,
+      message: `OTP sent to mobile +91 ${cleanPhone}`,
       phone: cleanPhone,
       otp: '123456',
-      userExists: true,
-      user: {
+      userExists: !!existingUser,
+      user: existingUser ? {
         name: existingUser.name,
         phone: existingUser.phone,
         email: existingUser.email,
         whatsappNumber: existingUser.whatsappNumber,
         address: existingUser.address
-      }
+      } : null
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -832,6 +841,10 @@ export const verifyActivationOTP = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid mobile number' });
     }
 
+    if (cleanOtp !== '123456') {
+      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456' });
+    }
+
     const existingUser = await User.findOne({
       $or: [
         { phone: cleanPhone },
@@ -840,29 +853,18 @@ export const verifyActivationOTP = async (req, res) => {
       ]
     });
 
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ User not found with this mobile number.'
-      });
-    }
-
-    if (cleanOtp !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456' });
-    }
-
     res.json({
       success: true,
       verified: true,
       phone: cleanPhone,
-      userExists: true,
-      user: {
+      userExists: !!existingUser,
+      user: existingUser ? {
         name: existingUser.name,
         phone: existingUser.phone,
         email: existingUser.email,
         whatsappNumber: existingUser.whatsappNumber,
         address: existingUser.address
-      }
+      } : null
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

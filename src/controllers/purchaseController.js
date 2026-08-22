@@ -10,7 +10,6 @@ import Payment from '../models/Payment.js';
 import Order from '../models/Order.js';
 import QuotaWallet from '../models/QuotaWallet.js';
 import EmailOTP from '../models/EmailOTP.js';
-import { sendOTPEmail, sendPurchaseConfirmationEmail } from '../utils/emailService.js';
 import { calculateNextStartNumber } from './adminController.js';
 
 // Initialize Razorpay Instance if keys are present
@@ -54,6 +53,7 @@ export const getStoreProductById = async (req, res) => {
 
 /**
  * 2. SEND CHECKOUT OTP (Mobile Verification)
+ * Fixed OTP: 123456 (Ready for DLT/SMS Gateway)
  */
 export const sendCheckoutOTP = async (req, res) => {
   try {
@@ -110,7 +110,7 @@ export const verifyCheckoutOTP = async (req, res) => {
 
     const record = await EmailOTP.findOne({ email: target, otp: trimmedOtp });
     if (!record) {
-      return res.status(400).json({ success: false, message: 'Invalid OTP code.' });
+      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456' });
     }
 
     if (new Date() > record.expiresAt) {
@@ -189,7 +189,7 @@ export const createRazorpayOrder = async (req, res) => {
 };
 
 /**
- * 5. VERIFY PAYMENT & PROCESS DIGITAL (INSTANT ALLOCATION) vs PHYSICAL (ORDER CONFIRMATION)
+ * 5. VERIFY PAYMENT & PROCESS DIGITAL vs PHYSICAL ORDER
  */
 export const verifyAndAllocateQR = async (req, res) => {
   try {
@@ -209,12 +209,12 @@ export const verifyAndAllocateQR = async (req, res) => {
       razorpay_signature
     } = req.body;
 
-    if (!name || !phone || !email || !address) {
+    if (!name || !phone || !address) {
       return res.status(400).json({ success: false, message: 'All contact and delivery details are required.' });
     }
 
     const quantity = Math.max(1, parseInt(reqQuantity, 10) || 1);
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = (email || `${phone.trim()}@safedrive.local`).toLowerCase().trim();
     const cleanPhone = phone.trim();
     const cleanPincode = (pincode || '').trim();
     const cleanLandmark = (landmark || '').trim();
@@ -226,7 +226,6 @@ export const verifyAndAllocateQR = async (req, res) => {
     });
     // In test / simulated mode or if verified, allow order creation
     if (!otpRecord && cleanPhone) {
-      // Auto-verify mobile
       await EmailOTP.create({ email: cleanPhone, otp: '123456', expiresAt: new Date(Date.now() + 3600000), verified: true });
     }
 
@@ -304,7 +303,8 @@ export const verifyAndAllocateQR = async (req, res) => {
 
     // 5. DIGITAL vs PHYSICAL ALLOCATION
     if (isDigital) {
-      // Case A: DIGITAL PASS PURCHASE -> AUTO-GENERATE DIGITAL E-PASS QR CODE
+      // Case A: DIGITAL PRODUCT PURCHASE
+      // Generate Digital QR batch. Status is GENERATED (Inactive until scanned & registered with OTP)
       const nextNum = await calculateNextStartNumber();
       const newProductId = `SD${String(nextNum).padStart(3, '0')}`;
 
@@ -317,7 +317,7 @@ export const verifyAndAllocateQR = async (req, res) => {
           batchId: 'STORE-DIGITAL',
           copyCode,
           publicToken,
-          status: 'GENERATED',
+          status: 'GENERATED', // Inactive by default; activates on scan & OTP verification
           userId: user._id,
           qrFor,
           qrType: 'DIGITAL',
@@ -330,8 +330,8 @@ export const verifyAndAllocateQR = async (req, res) => {
       }
       allocatedQRs = await QRCode.insertMany(newBatchItems);
     } else {
-      // Case B: PHYSICAL PRODUCT PURCHASE -> UNASSIGNED (COURIER SHIPMENT)
-      // Physical stickers will be shipped and activated by customer upon delivery & physical scan.
+      // Case B: PHYSICAL PRODUCT PURCHASE -> NO QR ALLOCATION AT PURCHASE
+      // Physical QR stickers will be shipped by courier. QR is revealed & activated only upon delivery & scan.
       allocatedQRs = [];
     }
 
@@ -358,8 +358,8 @@ export const verifyAndAllocateQR = async (req, res) => {
       orderNumber: generatedOrderNumber,
       razorpayPaymentId: finalPaymentId,
       razorpayOrderId: finalOrderId,
-      isClaimed: isDigital ? true : false,
-      claimedAt: isDigital ? new Date() : null,
+      isClaimed: false, // Remains false until scanned and registered
+      claimedAt: null,
       claimedProductId: isDigital && allocatedQRs.length ? allocatedQRs[0].productId : null,
       allocatedQRIds: allocatedQRs.map(q => q._id),
       metadata: {
@@ -399,23 +399,7 @@ export const verifyAndAllocateQR = async (req, res) => {
       }
     });
 
-    // 8. Send Purchase Confirmation Email in Background (Non-blocking for instant response)
-    if (cleanEmail && cleanEmail.includes('@')) {
-      sendPurchaseConfirmationEmail(
-        cleanEmail,
-        user,
-        {
-          orderId: generatedOrderNumber,
-          productName,
-          amount: finalAmount,
-          copiesPerSet: isDigital ? allocatedQRs.length : copiesPerSet,
-          isDigital
-        },
-        allocatedQRs
-      ).catch((err) => console.error('Email dispatch error (non-fatal):', err.message));
-    }
-
-    // 9. Generate JWT Auth Token for Instant Auto-Login
+    // 8. Generate JWT Auth Token for Instant Auto-Login
     const token = jwt.sign(
       { id: user._id, role: user.role, phone: user.phone },
       process.env.JWT_SECRET || 'secret',
@@ -423,15 +407,15 @@ export const verifyAndAllocateQR = async (req, res) => {
     );
 
     // Clear used OTP record
-    await EmailOTP.deleteMany({ email: cleanEmail });
+    await EmailOTP.deleteMany({ email: cleanPhone });
 
     res.json({
       success: true,
       isDigital,
       orderNumber: generatedOrderNumber,
       message: isDigital
-        ? '🎉 Digital QR Kit activated instantly! You can download and print your E-QR codes.'
-        : '🎉 Physical QR Kit ordered! Your kit will be delivered to your address. Once delivered, scan any sticker to link your vehicle.',
+        ? '🎉 Digital QR Kit generated! You can download and print your E-QR codes from your orders. Scan the QR code to register your vehicle and activate.'
+        : '🎉 Physical QR Kit ordered! Your kit will be shipped to your delivery address. Once delivered, scan any sticker to link your vehicle and activate.',
       token,
       user: {
         _id: user._id,
@@ -449,6 +433,7 @@ export const verifyAndAllocateQR = async (req, res) => {
         _id: q._id,
         copyCode: q.copyCode,
         publicToken: q.publicToken,
+        productId: q.productId,
         status: q.status
       }))
     });
