@@ -54,6 +54,74 @@ export const register = async (req, res) => {
   }
 };
 
+/**
+ * CREATE / SETUP ADMIN ENDPOINT (FOR POSTMAN)
+ */
+export const createAdmin = async (req, res) => {
+  try {
+    const { name, phone, email, password, role } = req.body;
+
+    if (!name || !phone || !password) {
+      return res.status(400).json({ success: false, message: 'Name, phone, and password are required.' });
+    }
+
+    const existingUser = await User.findOne({ $or: [{ phone }, { email: email?.toLowerCase().trim() }] });
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    if (existingUser) {
+      existingUser.name = name;
+      existingUser.role = role || 'SUPER_ADMIN';
+      existingUser.password = hashedPassword;
+      existingUser.status = 'ACTIVE';
+      if (email) existingUser.email = email.toLowerCase().trim();
+      await existingUser.save();
+
+      const token = generateToken(existingUser._id);
+      return res.json({
+        success: true,
+        message: 'Admin account updated/setup successfully!',
+        token,
+        admin: {
+          id: existingUser._id,
+          name: existingUser.name,
+          phone: existingUser.phone,
+          email: existingUser.email,
+          role: existingUser.role,
+          status: existingUser.status
+        }
+      });
+    }
+
+    const admin = await User.create({
+      name,
+      phone,
+      email: email ? email.toLowerCase().trim() : 'admin@safedrive.com',
+      whatsappNumber: phone,
+      address: 'Safe Drive Corporate HQ',
+      password: hashedPassword,
+      role: role || 'SUPER_ADMIN',
+      status: 'ACTIVE'
+    });
+
+    const token = generateToken(admin._id);
+    res.status(201).json({
+      success: true,
+      message: 'Admin account created successfully!',
+      token,
+      admin: {
+        id: admin._id,
+        name: admin.name,
+        phone: admin.phone,
+        email: admin.email,
+        role: admin.role,
+        status: admin.status
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const login = async (req, res) => {
   try {
     const { phone, email, password } = req.body;
