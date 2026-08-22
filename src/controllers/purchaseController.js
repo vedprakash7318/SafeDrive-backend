@@ -302,11 +302,38 @@ export const verifyAndAllocateQR = async (req, res) => {
 
     let allocatedQRs = [];
 
-    // 5. ALLOCATION POLICY
-    // Online checkout ONLY creates the verified customer Order.
-    // QR codes are NOT activated here. Physical kits are delivered and activated by scanning the sticker,
-    // and Digital Passes are linked when the user submits their vehicle registration details.
-    allocatedQRs = [];
+    // 5. DIGITAL vs PHYSICAL ALLOCATION
+    if (isDigital) {
+      // Case A: DIGITAL PASS PURCHASE -> AUTO-GENERATE DIGITAL E-PASS QR CODE
+      const nextNum = await calculateNextStartNumber();
+      const newProductId = `SD${String(nextNum).padStart(3, '0')}`;
+
+      const newBatchItems = [];
+      for (let c = 1; c <= copiesPerSet; c++) {
+        const copyCode = `${newProductId}C${c}`;
+        const publicToken = crypto.randomBytes(16).toString('hex');
+        newBatchItems.push({
+          productId: newProductId,
+          batchId: 'STORE-DIGITAL',
+          copyCode,
+          publicToken,
+          status: 'GENERATED',
+          userId: user._id,
+          qrFor,
+          qrType: 'DIGITAL',
+          qrTypeId: qrTypeDoc?._id || null,
+          initialCalls: product?.initialCalls || 10,
+          initialMessages: product?.initialMessages || 20,
+          validityDays: product?.validityDays || 365,
+          renewalAmount: product?.renewalAmount || 199
+        });
+      }
+      allocatedQRs = await QRCode.insertMany(newBatchItems);
+    } else {
+      // Case B: PHYSICAL PRODUCT PURCHASE -> UNASSIGNED (COURIER SHIPMENT)
+      // Physical stickers will be shipped and activated by customer upon delivery & physical scan.
+      allocatedQRs = [];
+    }
 
     // 6. Record Order in DB
     const orderDoc = await Order.create({
