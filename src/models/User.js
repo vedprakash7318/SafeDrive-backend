@@ -19,7 +19,7 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['USER', 'ADMIN', 'SUPER_ADMIN'], default: 'USER' },
   userType: { type: String, enum: ['USER', 'BUYER', 'QR_USER', 'BOTH'], default: 'USER' },
   registeredVia: { type: String, enum: ['STORE_PURCHASE', 'QR_SCAN_ACTIVATION', 'DIRECT_REGISTRATION'], default: 'STORE_PURCHASE' },
-  password: { type: String, required: true },
+  password: { type: String }, // Optional for passwordless OTP users
   fcmTokens: [{ type: String }]
 }, { timestamps: true });
 
