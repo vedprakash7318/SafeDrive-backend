@@ -37,6 +37,15 @@ export const getDashboard = async (req, res) => {
       $or: [{ userId }, { buyerId: userId }],
       isDeleted: { $ne: true }
     }).populate('vehicleId');
+
+    // Ensure any non-vehicle QR has a 4-digit security PIN
+    for (const q of qrs) {
+      if (q.isVehicle === false && !q.securityCode) {
+        q.securityCode = String(Math.floor(1000 + Math.random() * 9000));
+        await QRCode.updateMany({ productId: q.productId }, { securityCode: q.securityCode });
+      }
+    }
+
     let vehicles = await Vehicle.find({ userId });
     
     // Also include any vehicles attached to the user's active QRs
@@ -767,7 +776,7 @@ export const getUserOrders = async (req, res) => {
       ]
     })
       .populate('productId', 'name title price qrFor imageUrl')
-      .populate('allocatedQRIds', 'productId copyCode status publicToken activatedByName activationDate')
+      .populate('allocatedQRIds', 'productId copyCode status publicToken activatedByName activationDate securityCode isVehicle')
       .sort({ createdAt: -1 });
 
     const orders = rawOrders.map(order => {
