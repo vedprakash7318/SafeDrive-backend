@@ -11,10 +11,10 @@ export const initiateExotelMaskedCall = async ({
   timeLimit = 300, // 5 minutes max call duration
   timeOut = 30
 }) => {
-  const apiKey = process.env.EXOTEL_API_KEY;
-  const apiToken = process.env.EXOTEL_API_TOKEN;
-  const accountSid = process.env.EXOTEL_ACCOUNT_SID;
-  const callerId = process.env.EXOTEL_CALLER_ID || process.env.EXOPHONE || '';
+  const apiKey = process.env.EXOTEL_API_KEY || '1a1b04fb9bd879b774af6f1dc40081666b3c58ef2840a343';
+  const apiToken = process.env.EXOTEL_API_TOKEN || 'e465e1f80a25bf5866529a363c95375c907307bf732e4b14';
+  const accountSid = process.env.EXOTEL_ACCOUNT_SID || 'safedrive1';
+  const callerId = process.env.EXOTEL_CALLER_ID || process.env.EXOPHONE || '08040265530';
 
   if (!apiKey || !apiToken || !accountSid) {
     return {
@@ -99,10 +99,10 @@ export const initiateExotelMaskedCall = async ({
  * Exotel SMS Sending Service (Optional Transactional SMS)
  */
 export const sendExotelSMS = async ({ toPhone, message }) => {
-  const apiKey = process.env.EXOTEL_API_KEY;
-  const apiToken = process.env.EXOTEL_API_TOKEN;
-  const accountSid = process.env.EXOTEL_ACCOUNT_SID;
-  const callerId = process.env.EXOTEL_CALLER_ID || process.env.EXOPHONE || '';
+  const apiKey = process.env.EXOTEL_API_KEY || '1a1b04fb9bd879b774af6f1dc40081666b3c58ef2840a343';
+  const apiToken = process.env.EXOTEL_API_TOKEN || 'e465e1f80a25bf5866529a363c95375c907307bf732e4b14';
+  const accountSid = process.env.EXOTEL_ACCOUNT_SID || 'safedrive1';
+  const callerId = process.env.EXOTEL_CALLER_ID || process.env.EXOPHONE || '08040265530';
 
   if (!apiKey || !apiToken || !accountSid) {
     return { success: false, message: 'Exotel not configured' };
