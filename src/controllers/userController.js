@@ -841,7 +841,16 @@ export const getUserOrders = async (req, res) => {
  */
 export const getUserPackages = async (req, res) => {
   try {
-    const packages = await QuotaPackage.find({ status: 'ACTIVE', isDeleted: { $ne: true } }).sort({ price: 1 });
+    let packages = await QuotaPackage.find({ status: 'ACTIVE', isDeleted: { $ne: true } }).sort({ price: 1 });
+    if (packages.length === 0) {
+      const defaultPackages = [
+        { name: 'Starter Call Pack', category: 'CALL', quantity: 50, price: 99, durationDays: 365, bonusCalls: 0, bonusMessages: 50, status: 'ACTIVE' },
+        { name: 'Pro Protection Booster', category: 'CALL', quantity: 150, price: 199, durationDays: 365, bonusCalls: 0, bonusMessages: 150, status: 'ACTIVE' },
+        { name: 'Annual Unlimited Shield', category: 'CALL', quantity: 500, price: 399, durationDays: 365, bonusCalls: 0, bonusMessages: 500, status: 'ACTIVE' },
+        { name: 'WhatsApp Alerts Booster', category: 'MESSAGE', quantity: 100, price: 49, durationDays: 365, bonusCalls: 0, bonusMessages: 0, status: 'ACTIVE' }
+      ];
+      packages = await QuotaPackage.insertMany(defaultPackages);
+    }
     res.json({ success: true, packages });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
