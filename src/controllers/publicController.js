@@ -738,38 +738,63 @@ export const initiateCall = async (req, res) => {
       return res.status(400).json({ success: false, message: 'QR is not active' });
     }
 
-    // Atomic server-side quota deduction
-    const wallet = await QuotaWallet.findOneAndUpdate(
-      { qrId: qr._id, callBalance: { $gt: 0 } },
-      { $inc: { callBalance: -1, totalCallsUsed: 1 } },
-      { new: true }
-    );
-
-    if (!wallet) {
+    // Check available wallet balance without deducting yet
+    const wallet = await QuotaWallet.findOne({ qrId: qr._id });
+    if (!wallet || wallet.callBalance <= 0) {
       return res.status(400).json({
         success: false,
         message: 'Owner has exhausted available Call Quota. Please try messaging or Emergency Alert.'
       });
     }
 
-    // Synchronize deducted balance across all sibling QR copies sharing same productId
-    const siblingQRs = await QRCode.find({ productId: qr.productId });
-    const siblingIds = siblingQRs.map(s => s._id);
-    await QuotaWallet.updateMany(
-      { qrId: { $in: siblingIds } },
-      { callBalance: wallet.callBalance, totalCallsUsed: wallet.totalCallsUsed }
+    const targetOwnerPhone = qr.userId?.phone || qr.activationPhone || '';
+
+    // Initiate Exotel Masked Call Bridge
+    let exotelResponse = null;
+    if (cleanScanner && targetOwnerPhone) {
+      exotelResponse = await initiateExotelMaskedCall({
+        citizenPhone: cleanScanner,
+        ownerPhone: targetOwnerPhone,
+        customField: `token:${token},vehicle:${qr.vehicleId?.vehicleNumber || qr.productId}`
+      });
+    }
+
+    if (!exotelResponse || !exotelResponse.success) {
+      return res.json({
+        success: false,
+        masked: false,
+        message: exotelResponse?.message || 'Unable to initiate masked call at this moment.',
+        remainingCalls: wallet.callBalance
+      });
+    }
+
+    // Atomic server-side quota deduction ONLY on verified successful call bridge
+    const updatedWallet = await QuotaWallet.findOneAndUpdate(
+      { qrId: qr._id, callBalance: { $gt: 0 } },
+      { $inc: { callBalance: -1, totalCallsUsed: 1 } },
+      { new: true }
     );
 
-    // Log Quota Ledger
-    await QuotaTransaction.create({
-      userId: qr.userId?._id,
-      qrId: qr._id,
-      type: 'DEBIT',
-      category: 'CALL',
-      quantity: 1,
-      balanceAfter: wallet.callBalance,
-      reason: 'Public Scan Voice Call initiated'
-    });
+    if (updatedWallet) {
+      // Synchronize deducted balance across all sibling QR copies sharing same productId
+      const siblingQRs = await QRCode.find({ productId: qr.productId });
+      const siblingIds = siblingQRs.map(s => s._id);
+      await QuotaWallet.updateMany(
+        { qrId: { $in: siblingIds } },
+        { callBalance: updatedWallet.callBalance, totalCallsUsed: updatedWallet.totalCallsUsed }
+      );
+
+      // Log Quota Ledger
+      await QuotaTransaction.create({
+        userId: qr.userId?._id,
+        qrId: qr._id,
+        type: 'DEBIT',
+        category: 'CALL',
+        quantity: 1,
+        balanceAfter: updatedWallet.callBalance,
+        reason: 'Public Scan Voice Call connected via Exotel Bridge'
+      });
+    }
 
     // Log Scan Event
     const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
@@ -787,34 +812,20 @@ export const initiateCall = async (req, res) => {
       callerPhone: cleanScanner,
       scannerPhone: cleanScanner,
       reason: reason || 'Voice Call Inquiry',
-      notes: `Call from ${cleanScanner ? '+91 ' + cleanScanner : 'Scanner'}: ${reason || 'Vehicle Inquiry'}`,
+      notes: `Call from ${cleanScanner ? '+91 ' + cleanScanner : 'Scanner'}: ${reason || 'Vehicle Inquiry'} (Exotel Sid: ${exotelResponse.callSid})`,
       ipAddress,
       userAgent,
       device
     }).catch(() => {});
 
-    const targetOwnerPhone = qr.userId?.phone || qr.activationPhone || '';
-
-    // Initiate Exotel Masked Call Bridge
-    let exotelResponse = null;
-    if (cleanScanner && targetOwnerPhone) {
-      exotelResponse = await initiateExotelMaskedCall({
-        citizenPhone: cleanScanner,
-        ownerPhone: targetOwnerPhone,
-        customField: `token:${token},vehicle:${qr.vehicleId?.vehicleNumber || qr.productId}`
-      });
-    }
-
     res.json({
       success: true,
-      masked: exotelResponse ? exotelResponse.success : false,
+      masked: true,
       callSid: exotelResponse?.callSid,
-      provider: exotelResponse?.configured ? 'EXOTEL' : 'DIRECT',
-      message: exotelResponse?.success
-        ? '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.'
-        : exotelResponse?.message || 'Call initiated successfully.',
+      provider: 'EXOTEL',
+      message: '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.',
       targetPhone: targetOwnerPhone,
-      remainingCalls: wallet.callBalance
+      remainingCalls: updatedWallet ? updatedWallet.callBalance : wallet.callBalance
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
