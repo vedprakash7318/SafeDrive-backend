@@ -123,16 +123,24 @@ export const getQRInfoByToken = async (req, res) => {
       });
     }
 
-    // Unregistered / Physical QR -> Directly open Registration Form
+    // Unregistered / Physical / Digital QR -> Directly open Registration Form
     if (['GENERATED', 'IN STOCK', 'SOLD'].includes(qr.status)) {
+      const isVehicleTag = qr.isVehicle !== false;
+      if (!isVehicleTag && !qr.securityCode) {
+        qr.securityCode = String(Math.floor(1000 + Math.random() * 9000));
+        await qr.save();
+        await QRCode.updateMany({ productId: qr.productId }, { securityCode: qr.securityCode });
+      }
+
       return res.json({
         success: true,
         status: 'UNREGISTERED',
         productId: qr.productId,
         copyCode: qr.copyCode,
-        isVehicle: qr.isVehicle !== false,
-        category: qr.category || (qr.isVehicle === false ? 'NON_VEHICLE' : 'VEHICLE'),
+        isVehicle: isVehicleTag,
+        category: qr.category || (!isVehicleTag ? 'NON_VEHICLE' : 'VEHICLE'),
         qrFor: qr.qrFor || qr.qrType || 'Car',
+        securityCode: qr.securityCode || null,
         message: 'This QR is ready for registration'
       });
     }
