@@ -14,6 +14,11 @@ const qrCodeSchema = new mongoose.Schema({
     enum: ['GENERATED', 'IN STOCK', 'SOLD', 'REGISTERED', 'ACTIVE', 'EXPIRED', 'SUSPENDED', 'CANCELLED'],
     default: 'IN STOCK'
   },
+  // Vehicle vs Non-Vehicle configuration
+  isVehicle: { type: Boolean, default: true },
+  category: { type: String, enum: ['VEHICLE', 'NON_VEHICLE'], default: 'VEHICLE' },
+  securityCode: { type: String, trim: true }, // 4-digit unique PIN generated for Non-Vehicle tags
+
   // Batch-configured parameters set at creation time
   qrFor: { type: String, default: 'Car' }, // Vehicle/Item type: Car, Bike, Luggage, etc.
   qrType: { type: String, default: 'PHYSICAL' }, // Physical vs Digital

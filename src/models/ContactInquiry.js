@@ -9,9 +9,14 @@ const contactInquirySchema = new mongoose.Schema(
     message: { type: String, required: true, trim: true },
     status: {
       type: String,
-      enum: ['NEW', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'],
-      default: 'NEW'
+      enum: ['UNREAD', 'READ', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'NEW'],
+      default: 'UNREAD'
     },
+    isRead: { type: Boolean, default: false },
+    readAt: { type: Date },
+    replyNotes: { type: String, default: '' },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
     ipAddress: { type: String, default: '' },
     userAgent: { type: String, default: '' }
   },

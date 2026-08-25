@@ -169,7 +169,7 @@ export const login = async (req, res) => {
 };
 
 /**
- * Send Login OTP to User's Registered Mobile Number
+ * Send Login OTP to User's Mobile Number (Auto creates account for new users)
  */
 export const sendLoginOTP = async (req, res) => {
   try {
@@ -180,7 +180,7 @@ export const sendLoginOTP = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
     }
 
-    // Find User by mobile number
+    // Find User by mobile number if existing
     const user = await User.findOne({
       $or: [
         { phone: cleanPhone },
@@ -189,14 +189,7 @@ export const sendLoginOTP = async (req, res) => {
       ]
     });
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ No account found with this mobile number. Please check the number or purchase a safety kit first.'
-      });
-    }
-
-    if (user.status === 'SUSPENDED') {
+    if (user && user.status === 'SUSPENDED') {
       return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
     }
 
@@ -204,6 +197,7 @@ export const sendLoginOTP = async (req, res) => {
       success: true,
       message: `Login OTP sent to mobile +91 ${cleanPhone}`,
       phone: cleanPhone,
+      isNewUser: !user,
       otp: '123456'
     });
   } catch (error) {
@@ -212,7 +206,7 @@ export const sendLoginOTP = async (req, res) => {
 };
 
 /**
- * Verify Login OTP and issue Auth Token
+ * Verify Login OTP and issue Auth Token (Auto-creates account if new user)
  */
 export const verifyLoginOTP = async (req, res) => {
   try {
@@ -224,7 +218,11 @@ export const verifyLoginOTP = async (req, res) => {
       return res.status(400).json({ success: false, message: '10-digit mobile number and OTP code are required.' });
     }
 
-    const user = await User.findOne({
+    if (cleanOtp !== '123456') {
+      return res.status(400).json({ success: false, message: 'Invalid OTP verification code. Please enter 123456' });
+    }
+
+    let user = await User.findOne({
       $or: [
         { phone: cleanPhone },
         { phone: `+91${cleanPhone}` },
@@ -232,28 +230,35 @@ export const verifyLoginOTP = async (req, res) => {
       ]
     });
 
+    let isNewUser = false;
+
+    // If user does not exist, automatically register new user account
     if (!user) {
-      return res.status(404).json({ success: false, message: '❌ User account not found.' });
-    }
-
-    if (user.status === 'SUSPENDED') {
+      isNewUser = true;
+      user = await User.create({
+        name: `User ${cleanPhone.slice(-4)}`,
+        phone: cleanPhone,
+        whatsappNumber: cleanPhone,
+        role: 'USER',
+        status: 'ACTIVE',
+        address: ''
+      });
+    } else if (user.status === 'SUSPENDED') {
       return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
-    }
-
-    if (cleanOtp !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP verification code. Please enter 123456' });
     }
 
     const token = generateToken(user._id);
     res.json({
       success: true,
-      message: 'Login successful!',
+      message: isNewUser ? 'Welcome! Account created and logged in successfully.' : 'Login successful!',
       token,
+      isNewUser,
       user: {
         id: user._id,
         name: user.name,
         phone: user.phone,
         email: user.email,
+        whatsappNumber: user.whatsappNumber,
         address: user.address,
         role: user.role
       }

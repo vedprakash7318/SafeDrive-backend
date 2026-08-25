@@ -325,9 +325,14 @@ export const verifyAndAllocateQR = async (req, res) => {
       const nextNum = await calculateNextStartNumber();
       const newBatchItems = [];
 
+      const isNonVehicleItem = qrTypeDoc?.isVehicle === false ||
+        ['luggage', 'bag', 'pet', 'key', 'keys', 'laptop', 'door', 'other', 'item'].some(nv => qrFor.toLowerCase().includes(nv));
+      const itemIsVehicle = !isNonVehicleItem;
+
       for (let q = 0; q < quantity; q++) {
         const currentNum = nextNum + q;
         const newProductId = `SD${String(currentNum).padStart(3, '0')}`;
+        const securityCode = !itemIsVehicle ? String(Math.floor(1000 + Math.random() * 9000)) : null;
 
         for (let c = 1; c <= copiesPerSet; c++) {
           const copyCode = `${newProductId}C${c}`;
@@ -341,6 +346,9 @@ export const verifyAndAllocateQR = async (req, res) => {
             userId: user._id,
             qrFor,
             qrType: 'DIGITAL',
+            isVehicle: itemIsVehicle,
+            category: itemIsVehicle ? 'VEHICLE' : 'NON_VEHICLE',
+            securityCode,
             qrTypeId: qrTypeDoc?._id || null,
             initialCalls: product?.initialCalls || 10,
             initialMessages: product?.initialMessages || 20,

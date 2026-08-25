@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 
 const qrTypeSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true }, // e.g. "Car", "Bike", "Luggage"
+  category: { type: String, enum: ['VEHICLE', 'NON_VEHICLE'], default: 'VEHICLE' },
+  isVehicle: { type: Boolean, default: true },
   code: { type: String, trim: true },
   description: { type: String, default: '' },
   material: { type: String, default: 'Reflective Weatherproof Sticker' },

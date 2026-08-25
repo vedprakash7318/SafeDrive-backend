@@ -22,6 +22,7 @@ router.get('/landing-data', getLandingPageData);
 router.get('/scan-reasons', getPublicScanReasons);
 router.post('/subscribe-newsletter', subscribeNewsletter);
 router.post('/contact-inquiry', submitContactInquiry);
+router.post('/contact', submitContactInquiry);
 router.get('/qr/:token', getQRInfoByToken);
 router.post('/send-activation-otp', sendActivationOTP);
 router.post('/verify-activation-otp', verifyActivationOTP);

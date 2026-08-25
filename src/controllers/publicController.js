@@ -15,12 +15,54 @@ import ContactInquiry from '../models/ContactInquiry.js';
 import AuditLog from '../models/AuditLog.js';
 import Notification from '../models/Notification.js';
 import { sendFCMNotificationToUser } from '../utils/fcmSender.js';
+import { initiateExotelMaskedCall } from '../utils/exotel.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
 export const getPublicScanReasons = async (req, res) => {
   try {
-    const reasons = await ScanReason.find({ isActive: true, isDeleted: { $ne: true } }).sort({ order: 1, createdAt: 1 });
+    let { category, isVehicle, token } = req.query;
+
+    if (token && isVehicle === undefined && !category) {
+      const qr = await QRCode.findOne({ publicToken: token }).select('isVehicle category');
+      if (qr) {
+        isVehicle = qr.isVehicle !== false ? 'true' : 'false';
+        category = qr.isVehicle !== false ? 'VEHICLE' : 'NON_VEHICLE';
+      }
+    }
+
+    const isNonVehicle = category === 'NON_VEHICLE' || isVehicle === 'false';
+    const isVehicleCategory = category === 'VEHICLE' || isVehicle === 'true';
+
+    let filter = { isActive: true, isDeleted: { $ne: true } };
+
+    if (isNonVehicle) {
+      filter.$or = [
+        { applicableTo: { $in: ['ALL', 'NON_VEHICLE'] } },
+        { category: { $in: ['ALL', 'NON_VEHICLE'] } }
+      ];
+    } else if (isVehicleCategory) {
+      filter.$or = [
+        { applicableTo: { $in: ['ALL', 'VEHICLE'] } },
+        { category: { $in: ['ALL', 'VEHICLE'] } },
+        { applicableTo: { $exists: false } },
+        { category: { $exists: false } }
+      ];
+    }
+
+    let reasons = await ScanReason.find(filter).sort({ order: 1, createdAt: 1 });
+
+    // Fallback default reasons if non-vehicle specific reasons are not yet created in DB
+    if (isNonVehicle && (!reasons || reasons.length === 0 || !reasons.some(r => r.applicableTo === 'NON_VEHICLE'))) {
+      const defaultNonVeh = [
+        { _id: 'nv_1', title: 'Found / Missing Item Alert', icon: '🔍', iconKey: 'missing', color: 'indigo', isOtherType: false },
+        { _id: 'nv_2', title: 'Other Reason / Custom Note', icon: '💬', iconKey: 'other', color: 'rose', isOtherType: true }
+      ];
+      // If we have some universal reasons, combine them
+      const universal = (reasons || []).filter(r => r.applicableTo === 'ALL');
+      reasons = universal.length > 0 ? [...universal, ...defaultNonVeh.filter(d => !universal.some(u => u.title.toLowerCase() === d.title.toLowerCase()))] : defaultNonVeh;
+    }
+
     res.json({ success: true, reasons });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -88,8 +130,9 @@ export const getQRInfoByToken = async (req, res) => {
         status: 'UNREGISTERED',
         productId: qr.productId,
         copyCode: qr.copyCode,
+        isVehicle: qr.isVehicle !== false,
+        category: qr.category || (qr.isVehicle === false ? 'NON_VEHICLE' : 'VEHICLE'),
         qrFor: qr.qrFor || qr.qrType || 'Car',
-        user: qr.userId ? { name: qr.userId.name, phone: qr.userId.phone, email: qr.userId.email } : null,
         message: 'This QR is ready for registration'
       });
     }
@@ -113,21 +156,29 @@ export const getQRInfoByToken = async (req, res) => {
       const canCall = wallet ? wallet.callBalance > 0 : false;
       const canMessage = wallet ? wallet.messageBalance > 0 : false;
 
-      // Extract plate info
+      // Extract plate / item info
+      const isVehicleTag = qr.isVehicle !== false;
       const rawPlate = qr.vehicleId?.vehicleNumber || '';
       const cleanPlate = rawPlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      const maskedPlate = cleanPlate.length >= 4 
-        ? `${cleanPlate.slice(0, cleanPlate.length - 4)}${'*'.repeat(4)}`
-        : '****';
+      const maskedPlate = isVehicleTag
+        ? (cleanPlate.length >= 4 
+            ? `${cleanPlate.slice(0, cleanPlate.length - 4)}${'*'.repeat(4)}`
+            : '****')
+        : '••••';
 
       return res.json({
         success: true,
         status: 'ACTIVE',
         copyCode: qr.copyCode,
+        isVehicle: isVehicleTag,
+        category: qr.category || (isVehicleTag ? 'VEHICLE' : 'NON_VEHICLE'),
+        qrFor: qr.qrFor || (isVehicleTag ? 'Car' : 'Item'),
         requiresVerification: true,
         maskedPlate,
         vehicleBrand: qr.vehicleId?.vehicleBrand,
         vehicleName: qr.vehicleId?.vehicleName,
+        itemName: qr.vehicleId?.itemName || qr.vehicleId?.vehicleName,
+        itemType: qr.vehicleId?.itemType || qr.vehicleId?.vehicleBrand,
         canCall,
         canMessage,
         expiryDate: qr.expiryDate
@@ -153,14 +204,16 @@ export const getQRInfoByToken = async (req, res) => {
 export const verifyPlateLast4Digits = async (req, res) => {
   try {
     const { token } = req.params;
-    const { last4Digits } = req.body;
+    const { last4Digits, securityCode } = req.body;
 
     const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
 
-    if (!last4Digits || String(last4Digits).trim().length < 4) {
-      return res.status(400).json({ success: false, message: 'Please provide the 4 digits of the item tag / number plate' });
+    const inputDigits = String(last4Digits || securityCode || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+    if (!inputDigits || inputDigits.length !== 4) {
+      return res.status(400).json({ success: false, message: 'Please provide the 4-digit code / tag PIN' });
     }
 
     const qr = await QRCode.findOne({ publicToken: token })
@@ -171,13 +224,20 @@ export const verifyPlateLast4Digits = async (req, res) => {
       return res.status(400).json({ success: false, message: 'QR is not active' });
     }
 
-    const fullPlate = (qr.vehicleId?.vehicleNumber || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    const inputDigits = String(last4Digits).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const isVehicleTag = qr.isVehicle !== false;
+    let isMatch = false;
 
-    // Check if input matches the last 4 characters
-    const actualLast4 = fullPlate.slice(-4);
+    if (!isVehicleTag) {
+      // Non-Vehicle Tag: Match against 4-digit securityCode printed on the physical tag
+      isMatch = Boolean(qr.securityCode && inputDigits === String(qr.securityCode).toUpperCase());
+    } else {
+      // Vehicle Tag: Match against last 4 characters of vehicle number plate
+      const fullPlate = (qr.vehicleId?.vehicleNumber || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      const actualLast4 = fullPlate.slice(-4);
+      isMatch = (inputDigits === actualLast4);
+    }
 
-    if (inputDigits !== actualLast4) {
+    if (!isMatch) {
       // Log Failed Verification Attempt
       ScanLog.create({
         qrId: qr._id,
@@ -196,7 +256,9 @@ export const verifyPlateLast4Digits = async (req, res) => {
 
       return res.status(400).json({
         success: false,
-        message: 'Incorrect last 4 digits. Please check the physical tag / plate.'
+        message: !isVehicleTag
+          ? 'Incorrect 4-digit Security Tag PIN. Please check the physical tag.'
+          : 'Incorrect last 4 digits of number plate. Please check the physical vehicle plate.'
       });
     }
 
@@ -223,23 +285,22 @@ export const verifyPlateLast4Digits = async (req, res) => {
       success: true,
       verified: true,
       vehicle: {
-        vehicleName: qr.vehicleId.vehicleName,
-        vehicleBrand: qr.vehicleId.vehicleBrand,
-        vehicleNumber: qr.vehicleId.vehicleNumber
-      },
-      owner: {
-        name: qr.userId ? qr.userId.name : 'Protected Owner'
+        vehicleName: qr.vehicleId?.vehicleName,
+        vehicleBrand: qr.vehicleId?.vehicleBrand,
+        vehicleModel: qr.vehicleId?.vehicleModel,
+        vehicleNumber: qr.vehicleId?.vehicleNumber,
+        itemName: qr.vehicleId?.itemName || qr.vehicleId?.vehicleName,
+        itemType: qr.vehicleId?.itemType || qr.vehicleId?.vehicleBrand,
+        isVehicle: isVehicleTag
       },
       canCall,
-      canMessage,
-      callBalance: wallet ? wallet.callBalance : 0,
-      messageBalance: wallet ? wallet.messageBalance : 0,
-      expiryDate: qr.expiryDate
+      canMessage
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 // Helper to find eligible physical order matching the purchase mobile number and product category
 const findEligiblePhysicalOrder = async (cleanPhone, expectedQrFor) => {
@@ -329,11 +390,34 @@ export const registerQR = async (req, res) => {
       });
     }
 
-    if (!name || !phone || !vehicleNumber || !vehicleName || !vehicleBrand) {
-      return res.status(400).json({
-        success: false,
-        message: 'Name, Phone, Vehicle Name, Brand and Vehicle Number are required'
-      });
+    const isNonVehicle = qr.isVehicle === false;
+
+    // Field Validation based on Vehicle vs Non-Vehicle
+    if (isNonVehicle) {
+      const cleanItemName = (req.body.itemName || vehicleName || '').trim();
+      if (!name || !phone || !cleanItemName) {
+        return res.status(400).json({
+          success: false,
+          message: 'Full Name, Phone number, and Item / Tag Title are required'
+        });
+      }
+      // If QR has a securityCode PIN, user must provide the exact 4-digit PIN
+      if (qr.securityCode) {
+        const inputPin = String(req.body.securityCode || '').trim();
+        if (inputPin !== String(qr.securityCode).trim()) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid 4-digit Security Tag PIN. Please enter the 4-digit code printed on your physical tag / kit.'
+          });
+        }
+      }
+    } else {
+      if (!name || !phone || !vehicleNumber || !vehicleName || !vehicleBrand) {
+        return res.status(400).json({
+          success: false,
+          message: 'Name, Phone, Vehicle Name, Brand and Vehicle Number are required'
+        });
+      }
     }
 
     // Validate 2 emergency contacts
@@ -414,32 +498,71 @@ export const registerQR = async (req, res) => {
       await activationUser.save();
     }
 
-    // 3. Create / Update Vehicle under the QR User's Account (activationUser._id)
-    const cleanVehicleName = (vehicleName || req.body.vehicleModel || 'Standard Vehicle').trim();
-    const cleanVehicleBrand = (vehicleBrand || 'Vehicle').trim();
-    let vehicle = await Vehicle.findOne({ vehicleNumber: vehicleNumber.toUpperCase().trim() });
-    if (!vehicle) {
-      vehicle = await Vehicle.create({
-        userId: activationUser._id,
-        vehicleName: cleanVehicleName,
-        vehicleBrand: cleanVehicleBrand,
-        vehicleModel: cleanVehicleName,
-        vehicleNumber: vehicleNumber.toUpperCase().trim(),
-        emergencyContacts: [
+    // 3. Create / Update Vehicle or Item Record under the QR User's Account (activationUser._id)
+    let vehicle;
+    if (isNonVehicle) {
+      const cleanItemName = (req.body.itemName || vehicleName || `${qr.qrFor || 'Luggage'} Tag`).trim();
+      const cleanItemType = (req.body.itemType || req.body.itemCategory || vehicleBrand || qr.qrFor || 'Item').trim();
+      const itemIdentifier = `${qr.productId}${qr.securityCode ? `-${qr.securityCode}` : ''}`;
+
+      vehicle = await Vehicle.findOne({ vehicleNumber: itemIdentifier });
+      if (!vehicle) {
+        vehicle = await Vehicle.create({
+          userId: activationUser._id,
+          isVehicle: false,
+          itemName: cleanItemName,
+          itemType: cleanItemType,
+          vehicleName: cleanItemName,
+          vehicleBrand: cleanItemType,
+          vehicleModel: cleanItemType,
+          vehicleNumber: itemIdentifier,
+          emergencyContacts: [
+            { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
+            { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
+          ]
+        });
+      } else {
+        vehicle.isVehicle = false;
+        vehicle.itemName = cleanItemName;
+        vehicle.itemType = cleanItemType;
+        vehicle.vehicleName = cleanItemName;
+        vehicle.vehicleBrand = cleanItemType;
+        vehicle.vehicleModel = cleanItemType;
+        vehicle.emergencyContacts = [
           { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
           { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
-        ]
-      });
+        ];
+        vehicle.userId = activationUser._id;
+        await vehicle.save();
+      }
     } else {
-      vehicle.vehicleName = cleanVehicleName;
-      vehicle.vehicleBrand = cleanVehicleBrand;
-      vehicle.vehicleModel = cleanVehicleName;
-      vehicle.emergencyContacts = [
-        { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
-        { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
-      ];
-      vehicle.userId = activationUser._id;
-      await vehicle.save();
+      const cleanVehicleName = (vehicleName || req.body.vehicleModel || 'Standard Vehicle').trim();
+      const cleanVehicleBrand = (vehicleBrand || 'Vehicle').trim();
+      vehicle = await Vehicle.findOne({ vehicleNumber: vehicleNumber.toUpperCase().trim() });
+      if (!vehicle) {
+        vehicle = await Vehicle.create({
+          userId: activationUser._id,
+          isVehicle: true,
+          vehicleName: cleanVehicleName,
+          vehicleBrand: cleanVehicleBrand,
+          vehicleModel: cleanVehicleName,
+          vehicleNumber: vehicleNumber.toUpperCase().trim(),
+          emergencyContacts: [
+            { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
+            { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
+          ]
+        });
+      } else {
+        vehicle.isVehicle = true;
+        vehicle.vehicleName = cleanVehicleName;
+        vehicle.vehicleBrand = cleanVehicleBrand;
+        vehicle.vehicleModel = cleanVehicleName;
+        vehicle.emergencyContacts = [
+          { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
+          { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
+        ];
+        vehicle.userId = activationUser._id;
+      }
     }
 
     // Determine quota & validity from this specific QR code batch configuration
@@ -683,10 +806,27 @@ export const initiateCall = async (req, res) => {
       }).catch(() => {});
     }
 
+    const targetOwnerPhone = qr.userId?.phone || qr.activationPhone || '';
+
+    // Initiate Exotel Masked Call Bridge
+    let exotelResponse = null;
+    if (cleanScanner && targetOwnerPhone) {
+      exotelResponse = await initiateExotelMaskedCall({
+        citizenPhone: cleanScanner,
+        ownerPhone: targetOwnerPhone,
+        customField: `token:${token},vehicle:${qr.vehicleId?.vehicleNumber || qr.productId}`
+      });
+    }
+
     res.json({
       success: true,
-      message: 'Call initiated successfully',
-      targetPhone: qr.userId.phone,
+      masked: exotelResponse ? exotelResponse.success : false,
+      callSid: exotelResponse?.callSid,
+      provider: exotelResponse?.configured ? 'EXOTEL' : 'DIRECT',
+      message: exotelResponse?.success
+        ? '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.'
+        : exotelResponse?.message || 'Call initiated successfully.',
+      targetPhone: targetOwnerPhone,
       remainingCalls: wallet.callBalance
     });
   } catch (error) {
@@ -1273,26 +1413,38 @@ export const subscribeNewsletter = async (req, res) => {
 export const submitContactInquiry = async (req, res) => {
   try {
     const { name, email, phone, subject, message } = req.body;
+
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({ success: false, message: 'Please enter your name' });
+    }
+
+    const cleanPhone = (phone || '').trim().replace(/\D/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number' });
+    }
+
     if (!message || message.trim().length < 2) {
-      return res.status(400).json({ success: false, message: 'Please enter your message' });
+      return res.status(400).json({ success: false, message: 'Please enter your message or query' });
     }
 
     const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
 
     const inquiry = await ContactInquiry.create({
-      name: (name || '').trim(),
-      email: (email || '').trim().toLowerCase(),
-      phone: (phone || '').trim(),
-      subject: (subject || 'Landing Page Inquiry').trim(),
+      name: name.trim(),
+      phone: cleanPhone,
+      email: email ? email.trim().toLowerCase() : '',
+      subject: (subject || 'Contact Page Inquiry').trim(),
       message: message.trim(),
+      status: 'UNREAD',
+      isRead: false,
       ipAddress,
       userAgent
     });
 
     res.json({
       success: true,
-      message: 'Your message has been received! Our support team will get back to you shortly.',
+      message: 'Your inquiry has been submitted successfully! Our support team will get in touch with you shortly.',
       inquiryId: inquiry._id
     });
   } catch (error) {

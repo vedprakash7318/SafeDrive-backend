@@ -58,7 +58,10 @@ import {
   restoreScanReason,
   getAdminOrders,
   updateAdminOrderStatus,
-  getAdminOrderStats
+  getAdminOrderStats,
+  getContactMessages,
+  markContactMessageRead,
+  deleteContactMessage
 } from '../controllers/adminController.js';
 import { protect, adminOnly } from '../middlewares/authMiddleware.js';
 
@@ -156,5 +159,9 @@ router.put('/packages/:id/restore', restorePackage);
 
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
+
+router.get('/contact-messages', getContactMessages);
+router.put('/contact-messages/:id/read', markContactMessageRead);
+router.delete('/contact-messages/:id', deleteContactMessage);
 
 export default router;

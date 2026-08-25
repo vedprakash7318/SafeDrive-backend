@@ -5,6 +5,8 @@ const scanReasonSchema = new mongoose.Schema({
   description: { type: String, default: '' },
   iconKey: { type: String, default: 'alert' }, // ban, unlock, car, alert, other
   color: { type: String, default: 'indigo' }, // red, green, blue, rose, purple, amber, indigo
+  applicableTo: { type: String, enum: ['ALL', 'VEHICLE', 'NON_VEHICLE'], default: 'ALL' }, // ALL, VEHICLE, NON_VEHICLE
+  category: { type: String, enum: ['ALL', 'VEHICLE', 'NON_VEHICLE'], default: 'ALL' },
   isOtherType: { type: Boolean, default: false }, // if true, prompts for custom text area
   isActive: { type: Boolean, default: true },
   order: { type: Number, default: 0 },

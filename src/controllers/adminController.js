@@ -18,6 +18,7 @@ import SystemSetting from '../models/SystemSetting.js';
 import Product from '../models/Product.js';
 import Order from '../models/Order.js';
 import ScanLog from '../models/ScanLog.js';
+import ContactInquiry from '../models/ContactInquiry.js';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 
 // ==========================================
@@ -111,14 +112,19 @@ export const getQRTypes = async (req, res) => {
 
 export const createQRType = async (req, res) => {
   try {
-    const { name, copiesPerSet = 2 } = req.body;
+    const { name, copiesPerSet = 2, category = 'VEHICLE', isVehicle } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ success: false, message: 'QR Type name is required' });
     }
 
     const cleanName = name.trim();
+    const finalCategory = (category || (isVehicle === false ? 'NON_VEHICLE' : 'VEHICLE')).toUpperCase();
+    const finalIsVehicle = isVehicle !== undefined ? Boolean(isVehicle) : finalCategory !== 'NON_VEHICLE';
+
     const qrType = await QRType.create({
       name: cleanName,
+      category: finalCategory,
+      isVehicle: finalIsVehicle,
       copiesPerSet: Math.max(1, Math.min(20, parseInt(copiesPerSet, 10) || 2))
     });
 
@@ -131,7 +137,7 @@ export const createQRType = async (req, res) => {
 export const updateQRType = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, copiesPerSet } = req.body;
+    const { name, copiesPerSet, category, isVehicle } = req.body;
 
     const qrType = await QRType.findById(id);
     if (!qrType || qrType.isDeleted) {
@@ -139,6 +145,14 @@ export const updateQRType = async (req, res) => {
     }
 
     if (name) qrType.name = name.trim();
+    if (category !== undefined) {
+      qrType.category = category.toUpperCase();
+      qrType.isVehicle = category.toUpperCase() !== 'NON_VEHICLE';
+    }
+    if (isVehicle !== undefined) {
+      qrType.isVehicle = Boolean(isVehicle);
+      qrType.category = Boolean(isVehicle) ? 'VEHICLE' : 'NON_VEHICLE';
+    }
     if (copiesPerSet !== undefined) {
       qrType.copiesPerSet = Math.max(1, Math.min(20, parseInt(copiesPerSet, 10) || 2));
     }
@@ -389,12 +403,29 @@ export const generateQRBatch = async (req, res) => {
       copiesPerSet = chosenQRTypeDoc.copiesPerSet;
     }
 
+    // Determine if this batch is for Vehicles or Non-Vehicles (Luggage, Bag, Pet, etc.)
+    let isVehicle = true;
+    if (chosenQRTypeDoc && chosenQRTypeDoc.isVehicle !== undefined) {
+      isVehicle = chosenQRTypeDoc.isVehicle;
+    } else if (req.body.isVehicle !== undefined) {
+      isVehicle = Boolean(req.body.isVehicle);
+    } else if (req.body.category === 'NON_VEHICLE') {
+      isVehicle = false;
+    } else {
+      const nonVehicles = ['luggage', 'bag', 'pet', 'key', 'keys', 'laptop', 'door', 'house', 'wallet', 'other', 'item'];
+      if (nonVehicles.some(nv => chosenQrFor.toLowerCase().includes(nv))) {
+        isVehicle = false;
+      }
+    }
+
     const generatedQRs = [];
 
     for (let i = 0; i < count; i++) {
       const num = startNum + i;
       const numFormatted = String(num).padStart(3, '0');
       const productId = `SD${numFormatted}`;
+      // Generate unique 4-digit PIN for non-vehicles (Luggage, Bag, etc.)
+      const securityCode = !isVehicle ? String(Math.floor(1000 + Math.random() * 9000)) : null;
 
       // Generate C1..C(copiesPerSet)
       for (let c = 1; c <= copiesPerSet; c++) {
@@ -404,6 +435,9 @@ export const generateQRBatch = async (req, res) => {
           batchId: cleanTag,
           qrFor: chosenQrFor,
           qrType: chosenQrType,
+          isVehicle,
+          category: isVehicle ? 'VEHICLE' : 'NON_VEHICLE',
+          securityCode,
           qrTypeId: chosenQRTypeDoc?._id || qrTypeId || null,
           qrFormatId: chosenQRFormatDoc?._id || qrFormatId || null,
           copyCode: `${productId}C${c}`,
@@ -522,6 +556,9 @@ export const getQRsByGroup = async (req, res) => {
           batchId: q.batchId,
           qrFor: q.qrFor || 'Car',
           qrType: q.qrType || 'PHYSICAL',
+          isVehicle: q.isVehicle !== false,
+          category: q.category || (q.isVehicle === false ? 'NON_VEHICLE' : 'VEHICLE'),
+          securityCode: q.securityCode || null,
           status: q.status,
           copies: [],
           user: q.userId ? { _id: q.userId._id, name: q.userId.name, phone: q.userId.phone, email: q.userId.email } : null,
@@ -536,6 +573,8 @@ export const getQRsByGroup = async (req, res) => {
         _id: q._id,
         copyCode: q.copyCode,
         publicToken: q.publicToken,
+        isVehicle: q.isVehicle !== false,
+        securityCode: q.securityCode || null,
         status: q.status
       });
 
@@ -1385,7 +1424,15 @@ export const restorePackage = async (req, res) => {
 export const getScanReasons = async (req, res) => {
   try {
     const showDeleted = req.query.showDeleted === 'true';
+    const { category, applicableTo } = req.query;
     const filter = showDeleted ? { isDeleted: true } : { isDeleted: { $ne: true } };
+    
+    if (category && category !== 'ALL') {
+      filter.$or = [{ applicableTo: category }, { category: category }, { applicableTo: 'ALL' }];
+    } else if (applicableTo && applicableTo !== 'ALL') {
+      filter.$or = [{ applicableTo: applicableTo }, { category: applicableTo }, { applicableTo: 'ALL' }];
+    }
+
     const reasons = await ScanReason.find(filter).sort({ order: 1, createdAt: 1 });
     res.json({ success: true, reasons });
   } catch (error) {
@@ -1395,17 +1442,28 @@ export const getScanReasons = async (req, res) => {
 
 export const createScanReason = async (req, res) => {
   try {
-    const { title, description, iconKey = 'alert', color = 'indigo', isOtherType = false } = req.body;
+    const {
+      title,
+      description,
+      iconKey = 'alert',
+      color = 'indigo',
+      isOtherType = false,
+      applicableTo = 'ALL',
+      category
+    } = req.body;
     if (!title) {
       return res.status(400).json({ success: false, message: 'Reason title is required' });
     }
 
+    const targetCategory = applicableTo || category || 'ALL';
     const count = await ScanReason.countDocuments({ isDeleted: { $ne: true } });
     const reason = await ScanReason.create({
       title: title.trim(),
       description: description || '',
       iconKey,
       color,
+      applicableTo: targetCategory,
+      category: targetCategory,
       isOtherType: Boolean(isOtherType),
       order: count + 1,
       isActive: true
@@ -1420,7 +1478,7 @@ export const createScanReason = async (req, res) => {
 export const updateScanReason = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, iconKey, color, isOtherType, isActive, order } = req.body;
+    const { title, description, iconKey, color, isOtherType, isActive, order, applicableTo, category } = req.body;
 
     const reason = await ScanReason.findById(id);
     if (!reason || reason.isDeleted) {
@@ -1431,6 +1489,13 @@ export const updateScanReason = async (req, res) => {
     if (description !== undefined) reason.description = description;
     if (iconKey !== undefined) reason.iconKey = iconKey;
     if (color !== undefined) reason.color = color;
+    if (applicableTo !== undefined) {
+      reason.applicableTo = applicableTo;
+      reason.category = applicableTo;
+    } else if (category !== undefined) {
+      reason.applicableTo = category;
+      reason.category = category;
+    }
     if (isOtherType !== undefined) reason.isOtherType = isOtherType;
     if (isActive !== undefined) reason.isActive = isActive;
     if (order !== undefined) reason.order = Number(order);
@@ -2415,6 +2480,94 @@ export const getQRUserById = async (req, res) => {
       payments,
       quotaLedger
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// 19. CONTACT INQUIRIES & MESSAGES
+// ==========================================
+export const getContactMessages = async (req, res) => {
+  try {
+    const { status, search } = req.query;
+    let filter = { isDeleted: { $ne: true } };
+
+    if (status && status !== 'ALL') {
+      if (status === 'UNREAD') {
+        filter.isRead = { $ne: true };
+      } else if (status === 'READ') {
+        filter.isRead = true;
+      }
+    }
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
+      filter.$or = [
+        { name: regex },
+        { phone: regex },
+        { email: regex },
+        { message: regex },
+        { subject: regex }
+      ];
+    }
+
+    const messages = await ContactInquiry.find(filter).sort({ createdAt: -1 });
+    const unreadCount = await ContactInquiry.countDocuments({ isDeleted: { $ne: true }, isRead: { $ne: true } });
+    const totalCount = await ContactInquiry.countDocuments({ isDeleted: { $ne: true } });
+
+    res.json({
+      success: true,
+      messages,
+      unreadCount,
+      totalCount
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const markContactMessageRead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isRead } = req.body;
+
+    const message = await ContactInquiry.findById(id);
+    if (!message || message.isDeleted) {
+      return res.status(404).json({ success: false, message: 'Contact message not found' });
+    }
+
+    const newIsRead = isRead !== undefined ? Boolean(isRead) : true;
+    message.isRead = newIsRead;
+    message.status = newIsRead ? 'READ' : 'UNREAD';
+    if (newIsRead) {
+      message.readAt = new Date();
+    }
+    await message.save();
+
+    res.json({
+      success: true,
+      message: `Message marked as ${newIsRead ? 'Read' : 'Unread'}`,
+      data: message
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteContactMessage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const message = await ContactInquiry.findById(id);
+    if (!message) {
+      return res.status(404).json({ success: false, message: 'Contact message not found' });
+    }
+
+    message.isDeleted = true;
+    message.deletedAt = new Date();
+    await message.save();
+
+    res.json({ success: true, message: 'Message deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
