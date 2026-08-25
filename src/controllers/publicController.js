@@ -793,27 +793,6 @@ export const initiateCall = async (req, res) => {
       device
     }).catch(() => {});
 
-    // Create In-App & Push Notification
-    const cleanCallMsg = reason || 'Incoming Call Request';
-    if (qr.userId?._id) {
-      Notification.create({
-        userId: qr.userId._id,
-        title: `📞 Call Alert: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
-        message: cleanCallMsg,
-        type: 'CALL_ALERT',
-        qrId: qr._id,
-        vehicleNumber: qr.vehicleId?.vehicleNumber,
-        scannerPhone: cleanScanner,
-        metadata: { reason: cleanCallMsg, token }
-      }).catch(() => {});
-
-      sendFCMNotificationToUser(qr.userId._id, {
-        title: `📞 Call Alert: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
-        body: cleanCallMsg,
-        data: { reason: cleanCallMsg, token, type: 'CALL_ALERT' }
-      }).catch(() => {});
-    }
-
     const targetOwnerPhone = qr.userId?.phone || qr.activationPhone || '';
 
     // Initiate Exotel Masked Call Bridge
@@ -912,27 +891,7 @@ export const initiateMessage = async (req, res) => {
       device
     }).catch(() => {});
 
-    // Create In-App & Push Notification
-    if (qr.userId?._id) {
-      Notification.create({
-        userId: qr.userId._id,
-        title: `💬 Message Alert: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
-        message: cleanMsgText,
-        type: 'MESSAGE_ALERT',
-        qrId: qr._id,
-        vehicleNumber: qr.vehicleId?.vehicleNumber,
-        scannerPhone: cleanScanner,
-        metadata: { reason: cleanMsgText, messageText: cleanMsgText, token }
-      }).catch(() => {});
-
-      sendFCMNotificationToUser(qr.userId._id, {
-        title: `💬 Message Alert: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
-        body: cleanMsgText,
-        data: { reason: cleanMsgText, messageText: cleanMsgText, token, type: 'MESSAGE_ALERT' }
-      }).catch(() => {});
-    }
-
-    const targetPhone = qr.userId.whatsappNumber || qr.userId.phone;
+    const targetPhone = qr.userId?.whatsappNumber || qr.userId?.phone || '';
     const defaultMsg = encodeURIComponent(cleanMsgText);
     const whatsappUrl = `https://wa.me/91${targetPhone.replace(/\D/g, '').slice(-10)}?text=${defaultMsg}`;
 
