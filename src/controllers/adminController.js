@@ -471,8 +471,9 @@ export const getQRGroups = async (req, res) => {
           lastProduct: { $max: '$productId' },
           uniqueProducts: { $addToSet: '$productId' },
           totalStickers: { $sum: 1 },
+          generatedCount: { $sum: { $cond: [{ $eq: ['$status', 'GENERATED'] }, 1, 0] } },
           inStockCount: { $sum: { $cond: [{ $eq: ['$status', 'IN STOCK'] }, 1, 0] } },
-          soldCount: { $sum: { $cond: [{ $eq: ['$status', 'SOLD'] }, 1, 0] } },
+          soldCount: { $sum: { $cond: [{ $in: ['$status', ['SOLD', 'ACTIVE']] }, 1, 0] } },
           activeCount: { $sum: { $cond: [{ $eq: ['$status', 'ACTIVE'] }, 1, 0] } },
           suspendedCount: { $sum: { $cond: [{ $eq: ['$status', 'SUSPENDED'] }, 1, 0] } },
           createdAt: { $min: '$createdAt' }
@@ -488,6 +489,7 @@ export const getQRGroups = async (req, res) => {
           totalStickers: 1,
           firstProduct: 1,
           lastProduct: 1,
+          generatedCount: 1,
           inStockCount: 1,
           soldCount: 1,
           activeCount: 1,
@@ -545,9 +547,11 @@ export const getQRsByGroup = async (req, res) => {
 
     const uniqueKits = Object.values(kitMap);
     const totalKits = uniqueKits.length;
-    const inStockKits = uniqueKits.filter(k => k.status === 'IN STOCK' || k.status === 'GENERATED').length;
+    const isDigitalBatch = groupName === 'STORE-DIGITAL';
+    const inStockKits = isDigitalBatch ? 0 : uniqueKits.filter(k => k.status === 'IN STOCK' && !k.user).length;
     const activeKits = uniqueKits.filter(k => k.status === 'ACTIVE').length;
-    const soldKits = uniqueKits.filter(k => k.status === 'SOLD').length;
+    const soldKits = uniqueKits.filter(k => k.status === 'SOLD' || (k.user && k.status !== 'ACTIVE')).length;
+    const generatedKits = uniqueKits.filter(k => k.status === 'GENERATED').length;
 
     res.json({
       success: true,
@@ -557,7 +561,8 @@ export const getQRsByGroup = async (req, res) => {
         totalStickers: qrs.length,
         inStockKits,
         activeKits,
-        soldKits
+        soldKits,
+        generatedKits
       },
       kits: uniqueKits,
       qrs
@@ -1826,7 +1831,7 @@ export const getAdminOrders = async (req, res) => {
     const totalOrders = await Order.countDocuments(query);
     const orders = await Order.find(query)
       .populate('userId', 'name phone email')
-      .populate('allocatedQRIds', 'copyCode publicToken status')
+      .populate('allocatedQRIds', 'productId copyCode publicToken status')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
