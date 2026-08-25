@@ -8,6 +8,7 @@ import {
   getQRs,
   getQRById,
   updateQRStatus,
+  updateAdminQRDetails,
   adminRenewQR,
   adminAddAddonQuota,
   getAdminProducts,
@@ -18,8 +19,12 @@ import {
   uploadProductImage,
   getUsers,
   getUserById,
+  getQRUsers,
+  getQRUserById,
   updateUserStatus,
+  updateAdminUser,
   getVehicles,
+  updateAdminVehicle,
   getEmergencyAlerts,
   getScanLogs,
   getPackages,
@@ -73,6 +78,7 @@ router.get('/qr/group/:groupName', getQRsByGroup);
 router.get('/qr', getQRs);
 router.get('/qr/:id', getQRById);
 router.put('/qr/:id/status', updateQRStatus);
+router.put('/qr/:id/details', updateAdminQRDetails);
 router.post('/qr/:id/renew', adminRenewQR);
 router.post('/add-quota', adminAddAddonQuota);
 
@@ -119,8 +125,14 @@ router.patch('/orders/:id/status', updateAdminOrderStatus);
 
 router.get('/users', getUsers);
 router.get('/users/:id', getUserById);
+router.put('/users/:id', updateAdminUser);
 router.put('/users/:id/status', updateUserStatus);
+
+router.get('/qr-users', getQRUsers);
+router.get('/qr-users/:id', getQRUserById);
+
 router.get('/vehicles', getVehicles);
+router.put('/vehicles/:id', updateAdminVehicle);
 router.get('/emergency-alerts', getEmergencyAlerts);
 router.get('/scan-logs', getScanLogs);
 

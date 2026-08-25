@@ -5,10 +5,16 @@ const orderSchema = new mongoose.Schema({
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
   productName: { type: String, required: true },
   productType: { type: String, enum: ['PHYSICAL', 'DIGITAL'], default: 'PHYSICAL' },
-  qrFor: { type: String, default: 'Car' },
+  qrFor: { type: String, default: 'Car', trim: true },
+  activationPhone: { type: String, trim: true }, // Mobile number designated to verify & activate this kit (Kit #1)
+  activationPhones: [{ type: String, trim: true }], // Array of mobile numbers for each unit/quantity
+  claimedCount: { type: Number, default: 0 }, // Number of units claimed so far
+  claimedActivationPhones: [{ type: String, trim: true }], // Phone numbers that have claimed their kit slot
   customerName: { type: String, required: true },
   customerEmail: { type: String, required: true, lowercase: true, trim: true },
   customerPhone: { type: String, required: true, trim: true },
+  customerGender: { type: String, default: 'Male', trim: true },
+  gender: { type: String, default: 'Male', trim: true },
   deliveryAddress: { type: String },
   city: { type: String },
   state: { type: String },

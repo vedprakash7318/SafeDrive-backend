@@ -5,7 +5,9 @@ const qrCodeSchema = new mongoose.Schema({
   batchId: { type: String, required: true },
   copyCode: { type: String, required: true, unique: true }, // e.g. SD001C1
   publicToken: { type: String, required: true, unique: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // The active QR user / vehicle owner
+  buyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // The original customer/buyer who purchased the kit
+  orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
   vehicleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vehicle' },
   status: {
     type: String,
@@ -24,6 +26,10 @@ const qrCodeSchema = new mongoose.Schema({
 
   isDeleted: { type: Boolean, default: false },
   deletedAt: { type: Date },
+
+  activatedByName: { type: String },
+  activatedByPhone: { type: String },
+  activationPhone: { type: String },
 
   activationDate: { type: Date },
   expiryDate: { type: Date }

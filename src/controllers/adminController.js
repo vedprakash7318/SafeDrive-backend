@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import crypto from 'crypto';
 import QRCode from '../models/QRCode.js';
 import User from '../models/User.js';
@@ -799,32 +800,72 @@ export const adminRenewQR = async (req, res) => {
 
 export const getUsers = async (req, res) => {
   try {
-    const users = await User.find({ role: 'USER' }).select('-password').sort({ createdAt: -1 });
+    // Collect all user IDs who have placed orders, bought QRs, or made payments
+    const orderUserIds = await Order.distinct('userId');
+    const paymentUserIds = await Payment.distinct('userId');
+    const qrBuyerUserIds = await QRCode.distinct('buyerId');
+    const buyerUserIds = Array.from(new Set([...orderUserIds, ...paymentUserIds, ...qrBuyerUserIds].filter(Boolean)));
+
+    // Fetch only Customers & Buyers (exclude pure QR scan activation recipients)
+    const users = await User.find({
+      $and: [
+        { registeredVia: { $ne: 'QR_SCAN_ACTIVATION' } },
+        {
+          $or: [
+            { role: 'USER' },
+            { _id: { $in: buyerUserIds } }
+          ]
+        }
+      ]
+    }).select('-password').sort({ createdAt: -1 });
 
     const userDetails = await Promise.all(
       users.map(async (u) => {
         const vehicles = await Vehicle.find({ userId: u._id });
-        const qrs = await QRCode.find({ userId: u._id, isDeleted: { $ne: true } }).populate('vehicleId');
+        const qrs = await QRCode.find({
+          $or: [{ userId: u._id }, { buyerId: u._id }],
+          isDeleted: { $ne: true }
+        }).populate('vehicleId');
         const wallet = await QuotaWallet.findOne({ userId: u._id });
-        const orders = await Payment.find({ userId: u._id, status: 'SUCCESSFUL' }).sort({ createdAt: -1 });
+        const payments = await Payment.find({
+          $or: [{ userId: u._id }, { customerPhone: u.phone }, { customerEmail: u.email }],
+          status: 'SUCCESSFUL'
+        }).sort({ createdAt: -1 });
+        const userOrders = await Order.find({
+          $or: [{ userId: u._id }, { customerPhone: u.phone }, { customerEmail: u.email }]
+        });
 
-        const totalSpent = orders.reduce((sum, ord) => sum + (ord.amount || 0), 0);
+        const totalSpent = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
         
-        // Count by unique Kit sets (productId)
+        // Count by unique Kit sets + unclaimed physical orders (multiplying by remaining unclaimed quantity)
         const distinctKitsBought = new Set(qrs.map(q => q.productId || q.copyCode));
+        for (const ord of userOrders) {
+          if (ord.productType === 'PHYSICAL' && !ord.isClaimed) {
+            const totalQty = Math.max(1, ord.quantity || 1);
+            const claimed = ord.claimedCount || 0;
+            const remainingQty = Math.max(0, totalQty - claimed);
+            for (let k = 1; k <= remainingQty; k++) {
+              distinctKitsBought.add(`ORD_${ord.orderNumber || ord._id}_UNCLAIMED_${k}`);
+            }
+          }
+        }
+
         const activeKitsSet = new Set(qrs.filter((q) => q.status === 'ACTIVE').map(q => q.productId || q.copyCode));
-        const soldKitsSet = new Set(qrs.filter((q) => q.status === 'SOLD').map(q => q.productId || q.copyCode));
+        const digitalKitsSet = new Set(qrs.filter((q) => q.qrType === 'DIGITAL').map(q => q.productId || q.copyCode));
+        const pendingCount = Math.max(0, distinctKitsBought.size - activeKitsSet.size);
 
         return {
           ...u.toObject(),
           vehicles,
           qrs,
           wallet,
-          orders,
+          orders: userOrders,
+          payments,
           totalSpent,
           totalQRsBought: distinctKitsBought.size,
           activeQRsCount: activeKitsSet.size,
-          soldQRsCount: soldKitsSet.size
+          digitalQRsCount: digitalKitsSet.size,
+          soldQRsCount: pendingCount
         };
       })
     );
@@ -843,11 +884,47 @@ export const getUserById = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // 1. Vehicles
+    // 1. All Vehicles owned by this user
     const vehicles = await Vehicle.find({ userId: user._id }).sort({ createdAt: -1 });
 
-    // 2. All QRs linked to this user
-    const allUserQRs = await QRCode.find({ userId: user._id, isDeleted: { $ne: true } })
+    // 2. All Orders placed by this user
+    const orders = await Order.find({
+      $or: [{ userId: user._id }, { customerPhone: user.phone }, { customerEmail: user.email }]
+    }).sort({ createdAt: -1 });
+
+    // 3. All Payments made by this user
+    const payments = await Payment.find({
+      $or: [{ userId: user._id }, { customerPhone: user.phone }, { customerEmail: user.email }]
+    }).sort({ createdAt: -1 });
+
+    // 3. Quota Ledger Activity for this user
+    const rawQuotaLogs = await QuotaTransaction.find({
+      $or: [{ userId: user._id }, { customerPhone: user.phone }]
+    })
+      .populate('qrId')
+      .sort({ createdAt: -1 });
+
+    // Deduplicate ledger logs across copy sets sharing same productId
+    const quotaLedger = [];
+    const seenKitLogs = new Set();
+    for (const q of rawQuotaLogs) {
+      const prodId = q.productId || q.qrId?.productId || (q.qrId?.copyCode ? q.qrId.copyCode.slice(0, 5) : q._id);
+      const timeWindow = new Date(q.createdAt).toISOString().slice(0, 16);
+      const key = `${prodId}_${timeWindow}_${q.category}_${q.quantity}_${q.type}`;
+      if (!seenKitLogs.has(key)) {
+        seenKitLogs.add(key);
+        quotaLedger.push({
+          ...q.toObject(),
+          kitProductId: prodId
+        });
+      }
+    }
+
+    // 4. All QRs linked to this buyer (either directly assigned or bought by this user)
+    const allUserQRs = await QRCode.find({
+      $or: [{ userId: user._id }, { buyerId: user._id }],
+      isDeleted: { $ne: true }
+    })
       .populate('vehicleId')
       .populate('qrTypeId')
       .sort({ createdAt: -1 });
@@ -870,12 +947,17 @@ export const getUserById = async (req, res) => {
             vehicleNumber: q.vehicleId.vehicleNumber,
             emergencyContacts: q.vehicleId.emergencyContacts || []
           } : null,
+          activatedByName: q.activatedByName || null,
+          activatedByPhone: q.activatedByPhone || q.activationPhone || null,
           activationDate: q.activationDate,
           expiryDate: q.expiryDate,
           createdAt: q.createdAt,
           primaryQRId: q._id,
+          primaryPublicToken: q.publicToken,
           wallet: null,
-          payments: []
+          addons: [],
+          payments: [],
+          order: null
         };
       }
       kitMap[q.productId].copies.push({
@@ -890,7 +972,7 @@ export const getUserById = async (req, res) => {
       else if (q.status === 'EXPIRED' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'EXPIRED';
     }
 
-    // Attach QuotaWallet and Subscription to each unique kit
+    // Attach QuotaWallet, Addons, and Associated Order to each unique kit
     for (const prodId of Object.keys(kitMap)) {
       const kit = kitMap[prodId];
       const wallet = await QuotaWallet.findOne({ qrId: kit.primaryQRId });
@@ -902,59 +984,139 @@ export const getUserById = async (req, res) => {
         totalCallsPurchased: wallet.totalCallsPurchased,
         totalMessagesPurchased: wallet.totalMessagesPurchased
       } : null;
-    }
 
-    const uniqueKits = Object.values(kitMap);
+      // Add-on Packs
+      kit.addons = await QuotaTransaction.find({
+        userId: user._id,
+        productId: kit.productId,
+        type: 'CREDIT',
+        source: 'ADDON_PURCHASE'
+      }).sort({ createdAt: -1 });
 
-    // 3. Orders & Payments
-    const orders = await Order.find({
-      $or: [{ userId: user._id }, { customerPhone: user.phone }, { customerEmail: user.email }]
-    }).sort({ createdAt: -1 });
+      // Matched Order
+      const matchedOrder = orders.find(
+        o => o.claimedProductId === kit.productId ||
+             (o.allocatedQRIds && o.allocatedQRIds.some(id => kit.copies.some(c => c._id.toString() === id.toString())))
+      );
+      if (matchedOrder) {
+        const ordQty = Math.max(1, matchedOrder.quantity || 1);
+        const uPrice = matchedOrder.unitPrice || Math.round((matchedOrder.amount || 299) / ordQty);
+        kit.unitPrice = uPrice;
+        kit.order = {
+          _id: matchedOrder._id,
+          orderNumber: matchedOrder.orderNumber,
+          productName: matchedOrder.productName,
+          amount: matchedOrder.amount,
+          unitPrice: uPrice,
+          totalQuantity: ordQty,
+          paymentStatus: matchedOrder.paymentStatus,
+          deliveryStatus: matchedOrder.deliveryStatus,
+          courierPartner: matchedOrder.courierPartner,
+          trackingNumber: matchedOrder.trackingNumber,
+          createdAt: matchedOrder.createdAt
+        };
+      }
 
-    const payments = await Payment.find({ userId: user._id }).sort({ createdAt: -1 });
-
-    // Link payments to specific kits if metadata matches
-    for (const kit of uniqueKits) {
+      // Associated Payments
       const copyCodes = kit.copies.map(c => c.copyCode);
       kit.payments = payments.filter(p => {
         const metaQrCodes = p.metadata?.qrCodes || [];
         const matchesCode = metaQrCodes.some(code => copyCodes.includes(code));
         const matchesProdId = p.metadata?.productId === kit.productId;
-        return matchesCode || matchesProdId;
+        const matchesOrderId = kit.order && (p.orderId === kit.order.orderNumber || p.orderId === matchedOrder?.razorpayOrderId);
+        return matchesCode || matchesProdId || matchesOrderId;
       });
       kit.totalPaymentsCount = kit.payments.length;
-      kit.totalPaidAmount = kit.payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+      // Price paid for this single active kit unit
+      const singleKitPrice = kit.order?.unitPrice || (kit.payments.length > 0 ? kit.payments[0].amount : 299);
+      kit.unitPrice = singleKitPrice;
+      kit.totalPaidAmount = singleKitPrice;
     }
 
-    const totalSpent = payments.filter(p => p.status === 'SUCCESSFUL').reduce((sum, p) => sum + (p.amount || 0), 0);
-
-    // 4. Quota Transaction Ledger & History (Grouped by Kit Set productId)
-    const rawQuotaLedger = await QuotaTransaction.find({ userId: user._id })
-      .populate('qrId', 'productId copyCode')
-      .sort({ createdAt: -1 });
-
-    const seenKitLogs = new Set();
-    const quotaLedger = [];
-    for (const q of rawQuotaLedger) {
-      const prodId = q.productId || q.qrId?.productId || q.qrId?.copyCode?.replace(/C\d+$/, '') || 'Kit';
-      const timeWindow = new Date(q.createdAt).toISOString().slice(0, 16); // up to minute
-      const key = `${prodId}_${timeWindow}_${q.category}_${q.quantity}_${q.type}`;
-      if (!seenKitLogs.has(key)) {
-        seenKitLogs.add(key);
-        quotaLedger.push({
-          ...q.toObject(),
-          kitProductId: prodId
-        });
+    // 5. Check for Unclaimed Physical Orders and add remaining slots as Pending Delivery Order items
+    let totalPendingKitsQuantity = 0;
+    for (const order of orders) {
+      if (order.productType === 'PHYSICAL' && !order.isClaimed) {
+        const totalQty = Math.max(1, order.quantity || 1);
+        const claimed = order.claimedCount || 0;
+        const remainingQty = Math.max(0, totalQty - claimed);
+        if (remainingQty > 0) {
+          totalPendingKitsQuantity += remainingQty;
+          const pendingKey = `ORDER_${order.orderNumber || order._id}_REMAINING`;
+          if (!kitMap[pendingKey]) {
+            kitMap[pendingKey] = {
+              productId: `Order: ${order.orderNumber}`,
+              batchId: 'STORE-PHYSICAL-ORDER',
+              qrFor: order.productName || order.qrFor || 'Car',
+              qrType: 'PHYSICAL',
+              status: 'PENDING_DELIVERY_SCAN',
+              deliveryStatus: order.deliveryStatus || 'PROCESSING',
+              copies: [],
+              quantity: remainingQty,
+              totalOrderQuantity: totalQty,
+              claimedQuantity: claimed,
+              vehicle: null,
+              activationDate: null,
+              expiryDate: null,
+              createdAt: order.createdAt,
+              primaryQRId: null,
+              primaryPublicToken: null,
+              wallet: {
+                callBalance: 10 * remainingQty,
+                messageBalance: 20 * remainingQty,
+                totalCallsUsed: 0,
+                totalMessagesUsed: 0
+              },
+              addons: [],
+              totalPaidAmount: Math.round((order.amount || 299) * (remainingQty / totalQty)),
+              unitPrice: order.unitPrice || Math.round((order.amount || 299) / totalQty),
+              order: {
+                _id: order._id,
+                orderNumber: order.orderNumber,
+                productName: order.productName || 'Car Kit',
+                amount: order.amount,
+                quantity: remainingQty,
+                totalQuantity: totalQty,
+                claimedCount: claimed,
+                unitPrice: order.unitPrice || Math.round((order.amount || 299) / totalQty),
+                paymentStatus: order.paymentStatus,
+                deliveryStatus: order.deliveryStatus,
+                courierPartner: order.courierPartner,
+                trackingNumber: order.trackingNumber,
+                deliveryAddress: order.deliveryAddress,
+                city: order.city,
+                state: order.state,
+                pincode: order.pincode,
+                createdAt: order.createdAt
+              },
+              payments: payments.filter(p => p.orderId === order.orderNumber || p.orderId === order.razorpayOrderId),
+              isPendingOrder: true
+            };
+          }
+        }
       }
     }
+
+    const uniqueKits = Object.values(kitMap);
+    const totalSpent = payments.filter(p => p.status === 'SUCCESSFUL').reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    const existingQRKitsCount = new Set(allUserQRs.map(q => q.productId || q.copyCode)).size;
+    const digitalKitsCount = new Set(allUserQRs.filter(q => q.qrType === 'DIGITAL').map(q => q.productId || q.copyCode)).size;
+    const totalKitsCount = existingQRKitsCount + totalPendingKitsQuantity;
+    const activeKitsCount = uniqueKits.filter(k => k.status === 'ACTIVE').length;
+    const pendingScanCount = totalPendingKitsQuantity;
 
     res.json({
       success: true,
       user,
       stats: {
-        totalKits: uniqueKits.length,
-        activeKits: uniqueKits.filter(k => k.status === 'ACTIVE').length,
-        inStockKits: uniqueKits.filter(k => k.status === 'IN STOCK').length,
+        totalKits: totalKitsCount,
+        activeKits: activeKitsCount,
+        digitalKits: digitalKitsCount,
+        pendingKits: pendingScanCount,
+        physicalPendingKits: totalPendingKitsQuantity,
+        expiredKits: uniqueKits.filter(k => k.status === 'EXPIRED').length,
         totalVehicles: vehicles.length,
         totalOrders: orders.length,
         totalPayments: payments.length,
@@ -1416,6 +1578,8 @@ export const createAdminProduct = async (req, res) => {
       originalPrice = 0,
       discount = 0,
       qrType = 'PHYSICAL',
+      qrFor = 'Car',
+      qrTypeId = null,
       initialCalls = 10,
       initialMessages = 20,
       validityDays = 365,
@@ -1444,6 +1608,8 @@ export const createAdminProduct = async (req, res) => {
       discount: cleanDiscount,
       discountPercent,
       qrType: (qrType || 'PHYSICAL').toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL',
+      qrFor: (qrFor || 'Car').trim(),
+      qrTypeId: qrTypeId || null,
       initialCalls: Number(initialCalls) || 0,
       initialMessages: Number(initialMessages) || 0,
       validityDays: Number(validityDays) || 365,
@@ -1479,6 +1645,7 @@ export const updateAdminProduct = async (req, res) => {
     if (updates.validityDays !== undefined) updates.validityDays = Number(updates.validityDays);
     if (updates.renewalAmount !== undefined) updates.renewalAmount = Number(updates.renewalAmount);
     if (updates.qrType) updates.qrType = updates.qrType.toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+    if (updates.qrFor) updates.qrFor = updates.qrFor.trim();
 
     if (updates.originalPrice && updates.price && updates.originalPrice > updates.price) {
       updates.discount = updates.originalPrice - updates.price;
@@ -1489,6 +1656,15 @@ export const updateAdminProduct = async (req, res) => {
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
+
+    // When renewalAmount is updated by Admin, dynamically sync across all matching QR codes
+    if (updates.renewalAmount !== undefined && product.qrFor) {
+      await QRCode.updateMany(
+        { qrFor: product.qrFor },
+        { renewalAmount: Number(updates.renewalAmount) }
+      ).catch(() => {});
+    }
+
     res.json({ success: true, message: 'Product updated successfully', product });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -1750,6 +1926,10 @@ export const getScanLogs = async (req, res) => {
         { copyCode: { $regex: search, $options: 'i' } },
         { productId: { $regex: search, $options: 'i' } },
         { vehicleNumber: { $regex: search, $options: 'i' } },
+        { callerPhone: { $regex: search, $options: 'i' } },
+        { scannerPhone: { $regex: search, $options: 'i' } },
+        { reason: { $regex: search, $options: 'i' } },
+        { notes: { $regex: search, $options: 'i' } },
         { ipAddress: { $regex: search, $options: 'i' } }
       ];
     }
@@ -1768,6 +1948,467 @@ export const getScanLogs = async (req, res) => {
       page: parseInt(page, 10),
       pages: Math.ceil(total / limit),
       logs
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Master Admin Edit for QR / Kit Details
+ * Admin can update ANY field on a QR/Kit including renewal price, status, validity, quotas, vehicle, and owner details
+ */
+export const updateAdminQRDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      status,
+      qrFor,
+      qrType,
+      validityDays,
+      renewalAmount,
+      expiryDate,
+      initialCalls,
+      initialMessages,
+      vehicleBrand,
+      vehicleName,
+      vehicleNumber,
+      emergencyContacts
+    } = req.body;
+
+    let qr = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      qr = await QRCode.findById(id).populate('vehicleId');
+    }
+    if (!qr) {
+      qr = await QRCode.findOne({ productId: id }).populate('vehicleId');
+    }
+    if (!qr) {
+      qr = await QRCode.findOne({ copyCode: id }).populate('vehicleId');
+    }
+    if (!qr) {
+      return res.status(404).json({ success: false, message: 'QR record not found' });
+    }
+
+    const updates = {};
+    if (status) updates.status = status;
+    if (qrFor) updates.qrFor = qrFor.trim();
+    if (qrType) updates.qrType = qrType.toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+    if (validityDays !== undefined) updates.validityDays = Number(validityDays);
+    if (renewalAmount !== undefined) updates.renewalAmount = Number(renewalAmount);
+    if (initialCalls !== undefined) updates.initialCalls = Number(initialCalls);
+    if (initialMessages !== undefined) updates.initialMessages = Number(initialMessages);
+    if (expiryDate) updates.expiryDate = new Date(expiryDate);
+
+    // Update ALL sibling copies in this product kit
+    await QRCode.updateMany(
+      { productId: qr.productId },
+      updates
+    );
+
+    // If vehicle details are provided and QR has a vehicle, update Vehicle
+    let updatedVehicle = null;
+    if (qr.vehicleId && (vehicleBrand || vehicleName || vehicleNumber || emergencyContacts)) {
+      const vUpdates = {};
+      if (vehicleBrand) vUpdates.vehicleBrand = vehicleBrand.trim();
+      if (vehicleName) vUpdates.vehicleName = vehicleName.trim();
+      if (vehicleNumber) vUpdates.vehicleNumber = vehicleNumber.toUpperCase().replace(/\s+/g, '');
+      if (emergencyContacts && Array.isArray(emergencyContacts)) {
+        vUpdates.emergencyContacts = emergencyContacts.filter(c => c.name && c.number);
+      }
+      updatedVehicle = await Vehicle.findByIdAndUpdate(qr.vehicleId._id || qr.vehicleId, vUpdates, { new: true });
+    }
+
+    // Audit Log
+    AuditLog.create({
+      action: 'ADMIN_UPDATE_QR_MASTER_DETAILS',
+      targetId: qr.productId,
+      newValue: { updates, vehicle: updatedVehicle },
+      ip: req.ip || ''
+    }).catch(() => {});
+
+    const refreshedQR = await QRCode.findById(qr._id).populate('vehicleId');
+    res.json({
+      success: true,
+      message: `QR Kit ${qr.productId} updated successfully by Admin!`,
+      qr: refreshedQR,
+      vehicle: updatedVehicle
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Master Admin Edit for Vehicle Details
+ */
+export const updateAdminVehicle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { vehicleBrand, vehicleName, vehicleNumber, emergencyContacts, status } = req.body;
+
+    const updates = {};
+    if (vehicleBrand) updates.vehicleBrand = vehicleBrand.trim();
+    if (vehicleName) updates.vehicleName = vehicleName.trim();
+    if (vehicleNumber) updates.vehicleNumber = vehicleNumber.toUpperCase().replace(/\s+/g, '');
+    if (emergencyContacts && Array.isArray(emergencyContacts)) {
+      updates.emergencyContacts = emergencyContacts.filter(c => c.name && c.number);
+    }
+    if (status) updates.status = status;
+
+    const vehicle = await Vehicle.findByIdAndUpdate(id, updates, { new: true });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Vehicle updated successfully by Admin',
+      vehicle
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Master Admin Edit for User Details
+ */
+export const updateAdminUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      email,
+      phone,
+      whatsappNumber,
+      gender,
+      address,
+      city,
+      state,
+      pincode,
+      landmark,
+      role,
+      status
+    } = req.body;
+
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      user = await User.findById(id);
+    }
+    if (!user && phone) {
+      user = await User.findOne({ phone: phone.trim() });
+    }
+    if (!user) {
+      const qr = await QRCode.findOne({ $or: [{ productId: id }, { publicToken: id }] });
+      if (qr && qr.userId) {
+        user = await User.findById(qr.userId);
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (name) user.name = name.trim();
+    if (email) user.email = email.trim().toLowerCase();
+    if (phone) user.phone = phone.trim();
+    if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
+    if (gender) user.gender = gender;
+    if (address) user.address = address.trim();
+    if (city) user.city = city.trim();
+    if (state) user.state = state.trim();
+    if (pincode) user.pincode = pincode.trim();
+    if (landmark) user.landmark = landmark.trim();
+    if (role) user.role = role;
+    if (status) user.status = status;
+
+    await user.save();
+
+    // Also sync QRCode activatedByName & activatedByPhone for linked QRs
+    await QRCode.updateMany(
+      { userId: user._id },
+      {
+        activatedByName: user.name,
+        activatedByPhone: user.phone,
+        activationPhone: user.phone
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'User details updated successfully by Admin',
+      user
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Get all QR End-Users (Activated QR vehicle holders)
+ */
+export const getQRUsers = async (req, res) => {
+  try {
+    const activeQRs = await QRCode.find({ status: 'ACTIVE', isDeleted: { $ne: true } })
+      .populate('userId', '-password')
+      .populate('buyerId', '-password')
+      .populate('vehicleId')
+      .populate('orderId')
+      .sort({ activationDate: -1 });
+
+    const kitMap = {};
+    for (const q of activeQRs) {
+      if (!kitMap[q.productId]) {
+        kitMap[q.productId] = {
+          productId: q.productId,
+          batchId: q.batchId,
+          qrFor: q.qrFor || 'Car',
+          qrType: q.qrType || 'PHYSICAL',
+          status: q.status,
+          user: q.userId ? {
+            _id: q.userId._id,
+            name: q.activatedByName || q.userId.name,
+            phone: q.activatedByPhone || q.userId.phone,
+            whatsappNumber: q.userId.whatsappNumber || q.activatedByPhone || q.userId.phone,
+            address: q.userId.address,
+            status: q.userId.status
+          } : {
+            name: q.activatedByName || 'Activated User',
+            phone: q.activatedByPhone || q.activationPhone,
+            status: 'ACTIVE'
+          },
+          buyer: q.buyerId ? {
+            _id: q.buyerId._id,
+            name: q.buyerId.name,
+            phone: q.buyerId.phone,
+            email: q.buyerId.email
+          } : null,
+          vehicle: q.vehicleId ? {
+            _id: q.vehicleId._id,
+            vehicleName: q.vehicleId.vehicleName,
+            vehicleBrand: q.vehicleId.vehicleBrand,
+            vehicleNumber: q.vehicleId.vehicleNumber,
+            emergencyContacts: q.vehicleId.emergencyContacts || []
+          } : null,
+          activationDate: q.activationDate,
+          expiryDate: q.expiryDate,
+          copies: [],
+          primaryQRId: q._id,
+          primaryPublicToken: q.publicToken,
+          wallet: null
+        };
+      }
+      kitMap[q.productId].copies.push({
+        _id: q._id,
+        copyCode: q.copyCode,
+        publicToken: q.publicToken
+      });
+    }
+
+    const qrUserKits = Object.values(kitMap);
+
+    for (const kit of qrUserKits) {
+      // If buyer wasn't directly linked on QRCode, resolve from claimed Order
+      if (!kit.buyer) {
+        const order = await Order.findOne({
+          $or: [
+            { claimedProductId: kit.productId },
+            { 'allocatedQRIds': { $in: kit.copies.map(c => c._id) } }
+          ]
+        }).populate('userId', 'name phone email');
+
+        if (order && order.userId) {
+          kit.buyer = {
+            _id: order.userId._id,
+            name: order.userId.name,
+            phone: order.userId.phone,
+            email: order.userId.email
+          };
+        }
+      }
+
+      const wallet = await QuotaWallet.findOne({ qrId: kit.primaryQRId });
+      kit.wallet = wallet ? {
+        callBalance: wallet.callBalance,
+        messageBalance: wallet.messageBalance,
+        totalCallsUsed: wallet.totalCallsUsed,
+        totalMessagesUsed: wallet.totalMessagesUsed
+      } : null;
+    }
+
+    res.json({
+      success: true,
+      totalQRUsers: qrUserKits.length,
+      qrUsers: qrUserKits
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Get detailed view for a single QR User / Vehicle Owner
+ */
+export const getQRUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    let qrUser = null;
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      qrUser = await User.findById(id).select('-password');
+    }
+
+    // Find active QRs for this user or matching productId
+    let activeQRs = [];
+    if (qrUser) {
+      activeQRs = await QRCode.find({
+        $or: [{ userId: qrUser._id }, { activatedByPhone: qrUser.phone }],
+        isDeleted: { $ne: true }
+      })
+        .populate('vehicleId')
+        .populate('buyerId', '-password')
+        .populate('userId', '-password');
+    } else {
+      activeQRs = await QRCode.find({ productId: id, isDeleted: { $ne: true } })
+        .populate('vehicleId')
+        .populate('buyerId', '-password')
+        .populate('userId', '-password');
+      if (activeQRs.length > 0 && activeQRs[0].userId) {
+        qrUser = activeQRs[0].userId;
+      }
+    }
+
+    if (!qrUser && activeQRs.length === 0) {
+      return res.status(404).json({ success: false, message: 'QR User not found' });
+    }
+
+    if (!qrUser && activeQRs.length > 0) {
+      const q0 = activeQRs[0];
+      qrUser = {
+        _id: q0._id,
+        name: q0.activatedByName || 'Driver / Owner',
+        phone: q0.activatedByPhone || q0.activationPhone || 'N/A',
+        userType: 'QR_USER',
+        status: 'ACTIVE'
+      };
+    }
+
+    // Group into Unique Kit Sets
+    const kitMap = {};
+    for (const q of activeQRs) {
+      if (!kitMap[q.productId]) {
+        kitMap[q.productId] = {
+          productId: q.productId,
+          batchId: q.batchId,
+          qrFor: q.qrFor || 'Car',
+          qrType: q.qrType || 'PHYSICAL',
+          status: q.status,
+          vehicle: q.vehicleId ? {
+            _id: q.vehicleId._id,
+            vehicleName: q.vehicleId.vehicleName,
+            vehicleBrand: q.vehicleId.vehicleBrand,
+            vehicleNumber: q.vehicleId.vehicleNumber,
+            emergencyContacts: q.vehicleId.emergencyContacts || []
+          } : null,
+          buyer: q.buyerId ? {
+            _id: q.buyerId._id,
+            name: q.buyerId.name,
+            phone: q.buyerId.phone,
+            email: q.buyerId.email
+          } : null,
+          activatedByName: q.activatedByName,
+          activatedByPhone: q.activatedByPhone,
+          activationDate: q.activationDate,
+          expiryDate: q.expiryDate,
+          renewalAmount: q.renewalAmount || 199,
+          copies: [],
+          primaryQRId: q._id,
+          primaryPublicToken: q.publicToken,
+          wallet: null,
+          addons: []
+        };
+      }
+      kitMap[q.productId].copies.push({
+        _id: q._id,
+        copyCode: q.copyCode,
+        publicToken: q.publicToken
+      });
+    }
+
+    const kits = Object.values(kitMap);
+    for (const kit of kits) {
+      if (!kit.buyer) {
+        const order = await Order.findOne({
+          $or: [
+            { claimedProductId: kit.productId },
+            { 'allocatedQRIds': { $in: kit.copies.map(c => c._id) } }
+          ]
+        }).populate('userId', 'name phone email');
+
+        if (order && order.userId) {
+          kit.buyer = {
+            _id: order.userId._id,
+            name: order.userId.name,
+            phone: order.userId.phone,
+            email: order.userId.email
+          };
+          kit.orderNumber = order.orderNumber;
+        }
+      }
+
+      const wallet = await QuotaWallet.findOne({ qrId: kit.primaryQRId });
+      kit.wallet = wallet ? {
+        callBalance: wallet.callBalance,
+        messageBalance: wallet.messageBalance,
+        totalCallsUsed: wallet.totalCallsUsed,
+        totalMessagesUsed: wallet.totalMessagesUsed,
+        totalCallsPurchased: wallet.totalCallsPurchased,
+        totalMessagesPurchased: wallet.totalMessagesPurchased
+      } : null;
+
+      // Addons
+      kit.addons = await QuotaTransaction.find({
+        $or: [{ userId: qrUser._id }, { productId: kit.productId }],
+        type: 'CREDIT',
+        source: 'ADDON_PURCHASE'
+      }).sort({ createdAt: -1 });
+    }
+
+    // Ledger for this QR user
+    const quotaLedger = await QuotaTransaction.find({
+      $or: [
+        { userId: qrUser._id },
+        { qrId: { $in: activeQRs.map(q => q._id) } },
+        { productId: { $in: kits.map(k => k.productId) } }
+      ]
+    }).populate('qrId', 'productId copyCode').sort({ createdAt: -1 });
+
+    // Payments made by this QR user (Renewals, Addons, Top-ups)
+    const payments = await Payment.find({
+      $or: [
+        { userId: qrUser._id },
+        { customerPhone: qrUser.phone },
+        { 'metadata.productId': { $in: kits.map(k => k.productId) } },
+        { 'metadata.qrId': { $in: activeQRs.map(q => q._id) } }
+      ]
+    }).sort({ createdAt: -1 });
+
+    // Vehicles
+    const vehicles = await Vehicle.find({
+      $or: [
+        { userId: qrUser._id },
+        { _id: { $in: activeQRs.map(q => q.vehicleId?._id || q.vehicleId).filter(Boolean) } }
+      ]
+    });
+
+    res.json({
+      success: true,
+      qrUser,
+      kits,
+      vehicles,
+      payments,
+      quotaLedger
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

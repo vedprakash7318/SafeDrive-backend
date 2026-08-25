@@ -196,6 +196,9 @@ export const verifyAndAllocateQR = async (req, res) => {
     const {
       name,
       phone,
+      gender,
+      activationPhone: reqActivationPhone,
+      activationPhones: reqActivationPhones,
       email,
       address,
       city,
@@ -213,15 +216,27 @@ export const verifyAndAllocateQR = async (req, res) => {
       return res.status(400).json({ success: false, message: 'All contact and delivery details are required.' });
     }
 
+    const cleanGender = (gender || 'MALE').trim();
     const quantity = Math.max(1, parseInt(reqQuantity, 10) || 1);
     const cleanEmail = (email || `${phone.trim()}@safedrive.local`).toLowerCase().trim();
     const cleanPhone = phone.trim();
+    const cleanActivationPhone = (reqActivationPhone || cleanPhone).trim().replace(/\D/g, '').slice(-10);
     const cleanPincode = (pincode || '').trim();
     const cleanLandmark = (landmark || '').trim();
 
+    let cleanActivationPhones = [];
+    if (Array.isArray(reqActivationPhones) && reqActivationPhones.length > 0) {
+      cleanActivationPhones = reqActivationPhones
+        .map(p => (p || '').trim().replace(/\D/g, '').slice(-10))
+        .filter(p => p.length === 10);
+    }
+    while (cleanActivationPhones.length < quantity) {
+      cleanActivationPhones.push(cleanActivationPhone || cleanPhone);
+    }
+
     // 1. Verify OTP was confirmed (via phone or email)
     const otpRecord = await EmailOTP.findOne({
-      $or: [{ email: cleanPhone }, { email: cleanEmail }],
+      $or: [{ email: cleanPhone }, { email: cleanEmail }, { email: cleanActivationPhone }],
       verified: true
     });
     // In test / simulated mode or if verified, allow order creation
@@ -256,6 +271,7 @@ export const verifyAndAllocateQR = async (req, res) => {
         name: name.trim(),
         phone: cleanPhone,
         email: cleanEmail,
+        gender: cleanGender,
         address: address.trim(),
         city: (city || '').trim(),
         state: (state || '').trim(),
@@ -270,6 +286,7 @@ export const verifyAndAllocateQR = async (req, res) => {
       user.name = name.trim();
       user.email = cleanEmail;
       user.phone = cleanPhone;
+      if (cleanGender) user.gender = cleanGender;
       user.address = address.trim();
       if (city) user.city = city.trim();
       if (state) user.state = state.trim();
@@ -304,29 +321,33 @@ export const verifyAndAllocateQR = async (req, res) => {
     // 5. DIGITAL vs PHYSICAL ALLOCATION
     if (isDigital) {
       // Case A: DIGITAL PRODUCT PURCHASE
-      // Generate Digital QR batch. Status is GENERATED (Inactive until scanned & registered with OTP)
+      // Generate Digital QR batch for each quantity purchased. Status is GENERATED (Inactive until scanned & registered with OTP)
       const nextNum = await calculateNextStartNumber();
-      const newProductId = `SD${String(nextNum).padStart(3, '0')}`;
-
       const newBatchItems = [];
-      for (let c = 1; c <= copiesPerSet; c++) {
-        const copyCode = `${newProductId}C${c}`;
-        const publicToken = crypto.randomBytes(16).toString('hex');
-        newBatchItems.push({
-          productId: newProductId,
-          batchId: 'STORE-DIGITAL',
-          copyCode,
-          publicToken,
-          status: 'GENERATED', // Inactive by default; activates on scan & OTP verification
-          userId: user._id,
-          qrFor,
-          qrType: 'DIGITAL',
-          qrTypeId: qrTypeDoc?._id || null,
-          initialCalls: product?.initialCalls || 10,
-          initialMessages: product?.initialMessages || 20,
-          validityDays: product?.validityDays || 365,
-          renewalAmount: product?.renewalAmount || 199
-        });
+
+      for (let q = 0; q < quantity; q++) {
+        const currentNum = nextNum + q;
+        const newProductId = `SD${String(currentNum).padStart(3, '0')}`;
+
+        for (let c = 1; c <= copiesPerSet; c++) {
+          const copyCode = `${newProductId}C${c}`;
+          const publicToken = crypto.randomBytes(16).toString('hex');
+          newBatchItems.push({
+            productId: newProductId,
+            batchId: 'STORE-DIGITAL',
+            copyCode,
+            publicToken,
+            status: 'GENERATED', // Inactive by default; activates on scan & OTP verification
+            userId: user._id,
+            qrFor,
+            qrType: 'DIGITAL',
+            qrTypeId: qrTypeDoc?._id || null,
+            initialCalls: product?.initialCalls || 10,
+            initialMessages: product?.initialMessages || 20,
+            validityDays: product?.validityDays || 365,
+            renewalAmount: product?.renewalAmount || 199
+          });
+        }
       }
       allocatedQRs = await QRCode.insertMany(newBatchItems);
     } else {
@@ -342,9 +363,15 @@ export const verifyAndAllocateQR = async (req, res) => {
       productName,
       productType,
       qrFor,
+      activationPhone: cleanActivationPhones[0] || cleanPhone,
+      activationPhones: cleanActivationPhones,
+      claimedCount: 0,
+      claimedActivationPhones: [],
       customerName: user.name,
       customerEmail: cleanEmail,
       customerPhone: cleanPhone,
+      customerGender: cleanGender,
+      gender: cleanGender,
       deliveryAddress: user.address,
       city: user.city,
       state: user.state,

@@ -17,6 +17,7 @@ const scanLogSchema = new mongoose.Schema({
       'CALL_INITIATED',
       'SMS_INITIATED',
       'WHATSAPP_INITIATED',
+      'PUSH_NOTIFICATION',
       'REGISTRATION_VIEW',
       'EXPIRED_VIEW',
       'SUSPENDED_VIEW'
@@ -26,6 +27,15 @@ const scanLogSchema = new mongoose.Schema({
   ipAddress: { type: String },
   userAgent: { type: String },
   device: { type: String },
+  callerPhone: { type: String },
+  scannerPhone: { type: String },
+  reason: { type: String },
+  message: { type: String },
+  location: {
+    latitude: { type: Number },
+    longitude: { type: Number },
+    accuracy: { type: Number }
+  },
   notes: { type: String }
 }, { timestamps: true });
 

@@ -11,6 +11,8 @@ const productSchema = new mongoose.Schema({
   imageUrl: { type: String, default: '' },
   imagePublicId: { type: String, default: '' },
   qrType: { type: String, required: true, enum: ['PHYSICAL', 'DIGITAL'], default: 'PHYSICAL' }, // PHYSICAL or DIGITAL
+  qrFor: { type: String, default: 'Car', trim: true }, // Vehicle / Item Category: Car, Bike, Luggage, etc.
+  qrTypeId: { type: mongoose.Schema.Types.ObjectId, ref: 'QRType' },
   initialCalls: { type: Number, default: 10, min: 0 }, // Free voice calls quota
   initialMessages: { type: Number, default: 20, min: 0 }, // Free message/SMS quota
   validityDays: { type: Number, default: 365, min: 1 }, // Cloud validity in days
