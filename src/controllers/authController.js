@@ -124,8 +124,8 @@ export const createAdmin = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { phone, email, password } = req.body;
-    const identifier = (phone || email || '').trim();
+    const { phone, email, emailOrPhone, password } = req.body;
+    const identifier = (emailOrPhone || phone || email || '').trim();
 
     if (!identifier || !password) {
       return res.status(400).json({ success: false, message: 'Phone/Email and password are required' });

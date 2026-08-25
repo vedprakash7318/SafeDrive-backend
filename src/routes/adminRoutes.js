@@ -1,5 +1,6 @@
 import express from 'express';
 import multer from 'multer';
+import AuditLog from '../models/AuditLog.js';
 import {
   getStats,
   generateQRBatch,
@@ -71,16 +72,27 @@ const router = express.Router();
 router.use(protect, adminOnly);
 
 router.get('/stats', getStats);
+router.get('/dashboard', getStats);
 router.post('/qr/generate', generateQRBatch);
 router.get('/qr/next-number', getNextSequenceNumber);
 router.get('/qr/groups', getQRGroups);
+router.get('/qr/batches', getQRGroups);
 router.get('/qr/group/:groupName', getQRsByGroup);
 router.get('/qr', getQRs);
+router.get('/qr/list', getQRs);
 router.get('/qr/:id', getQRById);
 router.put('/qr/:id/status', updateQRStatus);
 router.put('/qr/:id/details', updateAdminQRDetails);
 router.post('/qr/:id/renew', adminRenewQR);
 router.post('/add-quota', adminAddAddonQuota);
+router.get('/audit-logs', async (req, res) => {
+  try {
+    const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(50);
+    res.json({ success: true, logs });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 router.get('/products', getAdminProducts);
 router.get('/products/:id', getAdminProductById);
