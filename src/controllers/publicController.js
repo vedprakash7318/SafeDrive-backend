@@ -931,7 +931,10 @@ export const sendPushNotification = async (req, res) => {
       return res.status(400).json({ success: false, message: 'QR is not active' });
     }
 
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    if (ipAddress.includes(',')) {
+      ipAddress = ipAddress.split(',')[0].trim();
+    }
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
 
@@ -940,9 +943,10 @@ export const sendPushNotification = async (req, res) => {
     const rateLimitHours = systemSettings?.pushNotificationRateLimitHours || 12;
     const rateLimitCount = systemSettings?.pushNotificationRateLimitCount || 10;
 
+    const ipRegex = new RegExp(`^${ipAddress}`);
     const identifierCondition = cleanScanner 
-      ? { $or: [{ callerPhone: cleanScanner }, { scannerPhone: cleanScanner }, { ipAddress }] }
-      : { ipAddress };
+      ? { $or: [{ callerPhone: cleanScanner }, { scannerPhone: cleanScanner }, { ipAddress: ipRegex }] }
+      : { ipAddress: ipRegex };
 
     // 1. Cooldown check
     const cooldownTime = new Date(Date.now() - cooldownSeconds * 1000);
