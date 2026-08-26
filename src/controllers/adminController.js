@@ -1571,7 +1571,10 @@ export const updateSettings = async (req, res) => {
       defaultValidityDays,
       defaultRenewalPrice,
       renewalBonusCalls,
-      renewalBonusMessages
+      renewalBonusMessages,
+      pushNotificationCooldownSeconds,
+      pushNotificationRateLimitHours,
+      pushNotificationRateLimitCount
     } = req.body;
 
     let settings = await SystemSetting.findOne();
@@ -1587,6 +1590,9 @@ export const updateSettings = async (req, res) => {
     if (defaultRenewalPrice !== undefined) settings.defaultRenewalPrice = Number(defaultRenewalPrice);
     if (renewalBonusCalls !== undefined) settings.renewalBonusCalls = Number(renewalBonusCalls);
     if (renewalBonusMessages !== undefined) settings.renewalBonusMessages = Number(renewalBonusMessages);
+    if (pushNotificationCooldownSeconds !== undefined) settings.pushNotificationCooldownSeconds = Number(pushNotificationCooldownSeconds);
+    if (pushNotificationRateLimitHours !== undefined) settings.pushNotificationRateLimitHours = Number(pushNotificationRateLimitHours);
+    if (pushNotificationRateLimitCount !== undefined) settings.pushNotificationRateLimitCount = Number(pushNotificationRateLimitCount);
 
     await settings.save();
 

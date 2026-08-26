@@ -935,7 +935,42 @@ export const sendPushNotification = async (req, res) => {
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
 
-    // 1. Create Scan Log
+    const systemSettings = await SystemSetting.findOne();
+    const cooldownSeconds = systemSettings?.pushNotificationCooldownSeconds || 30;
+    const rateLimitHours = systemSettings?.pushNotificationRateLimitHours || 12;
+    const rateLimitCount = systemSettings?.pushNotificationRateLimitCount || 10;
+
+    const identifierCondition = cleanScanner 
+      ? { $or: [{ callerPhone: cleanScanner }, { scannerPhone: cleanScanner }, { ipAddress }] }
+      : { ipAddress };
+
+    // 1. Cooldown check
+    const cooldownTime = new Date(Date.now() - cooldownSeconds * 1000);
+    const recentScan = await ScanLog.findOne({
+      qrId: qr._id,
+      eventType: 'PUSH_NOTIFICATION',
+      ...identifierCondition,
+      createdAt: { $gte: cooldownTime }
+    });
+
+    if (recentScan) {
+      return res.status(429).json({ success: false, message: `Please wait ${cooldownSeconds} seconds before sending another push notification.` });
+    }
+
+    // 2. Rate limit check
+    const rateLimitTime = new Date(Date.now() - rateLimitHours * 60 * 60 * 1000);
+    const scanCount = await ScanLog.countDocuments({
+      qrId: qr._id,
+      eventType: 'PUSH_NOTIFICATION',
+      ...identifierCondition,
+      createdAt: { $gte: rateLimitTime }
+    });
+
+    if (scanCount >= rateLimitCount) {
+      return res.status(429).json({ success: false, message: `You have reached the maximum limit of ${rateLimitCount} push notifications per ${rateLimitHours} hours for this vehicle.` });
+    }
+
+    // 3. Create Scan Log
     await ScanLog.create({
       qrId: qr._id,
       copyCode: qr.copyCode,

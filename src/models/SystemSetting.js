@@ -8,7 +8,10 @@ const systemSettingSchema = new mongoose.Schema({
   renewalBonusCalls: { type: Number, default: 10 },
   renewalBonusMessages: { type: Number, default: 20 },
   supportPhone: { type: String, default: '+91 9999999999' },
-  supportEmail: { type: String, default: 'support@safedrive.in' }
+  supportEmail: { type: String, default: 'support@safedrive.in' },
+  pushNotificationCooldownSeconds: { type: Number, default: 30 },
+  pushNotificationRateLimitHours: { type: Number, default: 12 },
+  pushNotificationRateLimitCount: { type: Number, default: 10 }
 }, { timestamps: true });
 
 export default mongoose.model('SystemSetting', systemSettingSchema);
