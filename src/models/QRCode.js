@@ -31,6 +31,7 @@ const qrCodeSchema = new mongoose.Schema({
 
   isDeleted: { type: Boolean, default: false },
   deletedAt: { type: Date },
+  isPrinted: { type: Boolean, default: false },
 
   activatedByName: { type: String },
   activatedByPhone: { type: String },

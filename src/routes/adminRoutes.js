@@ -6,6 +6,7 @@ import {
   generateQRBatch,
   getQRGroups,
   getQRsByGroup,
+  toggleBatchPrintStatus,
   getQRs,
   getQRById,
   updateQRStatus,
@@ -81,6 +82,7 @@ router.get('/qr/next-number', getNextSequenceNumber);
 router.get('/qr/groups', getQRGroups);
 router.get('/qr/batches', getQRGroups);
 router.get('/qr/group/:groupName', getQRsByGroup);
+router.put('/qr/batch/:batchId/print-status', toggleBatchPrintStatus);
 router.get('/qr', getQRs);
 router.get('/qr/list', getQRs);
 router.get('/qr/:id', getQRById);
