@@ -542,6 +542,87 @@ export const getQRGroups = async (req, res) => {
   }
 };
 
+export const updateQRBatch = async (req, res) => {
+  try {
+    const { batchId } = req.params;
+    const { newBatchId, qrFor, qrType, qrTypeId } = req.body;
+    
+    if (!newBatchId || !qrFor || !qrType) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const cleanTag = newBatchId.trim().toUpperCase().replace(/\s+/g, '-');
+
+    // If batch name is changing, check if the new batch name already exists
+    if (batchId !== cleanTag) {
+      const existing = await QRCode.findOne({ batchId: cleanTag, isDeleted: { $ne: true } });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'A batch with the new name already exists. Choose a different name.' });
+      }
+    }
+
+    const updateObj = {
+      batchId: cleanTag,
+      qrFor,
+      qrType
+    };
+    if (qrTypeId) {
+      updateObj.qrTypeId = qrTypeId;
+    }
+
+    // Update all QRs in this batch
+    await QRCode.updateMany(
+      { batchId, isDeleted: { $ne: true } },
+      { $set: updateObj }
+    );
+
+    // Also update QRTag if changing name
+    if (batchId !== cleanTag) {
+      await QRTag.findOneAndUpdate(
+        { name: batchId },
+        { $set: { name: cleanTag } }
+      );
+    }
+
+    res.json({ success: true, message: `Batch ${batchId} updated successfully to ${cleanTag}` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteQRBatch = async (req, res) => {
+  try {
+    const { batchId } = req.params;
+
+    // Check if there are any SOLD or ACTIVE QRs in this batch
+    const soldOrActiveCount = await QRCode.countDocuments({
+      batchId,
+      isDeleted: { $ne: true },
+      status: { $in: ['SOLD', 'REGISTERED', 'ACTIVE', 'SUSPENDED'] }
+    });
+
+    if (soldOrActiveCount > 0) {
+      return res.status(400).json({ success: false, message: `Cannot delete batch. It contains ${soldOrActiveCount} sold or active stickers.` });
+    }
+
+    // Soft delete all QRs in batch
+    await QRCode.updateMany(
+      { batchId, isDeleted: { $ne: true } },
+      { $set: { isDeleted: true, deletedAt: new Date() } }
+    );
+
+    // Soft delete QRTag
+    await QRTag.findOneAndUpdate(
+      { name: batchId },
+      { $set: { isDeleted: true, deletedAt: new Date() } }
+    );
+
+    res.json({ success: true, message: `Batch ${batchId} deleted successfully.` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const getQRsByGroup = async (req, res) => {
   try {
     const { groupName } = req.params;
