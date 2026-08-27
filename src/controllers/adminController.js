@@ -542,6 +542,22 @@ export const getQRGroups = async (req, res) => {
   }
 };
 
+export const toggleBatchPrintStatus = async (req, res) => {
+  try {
+    const { batchId } = req.params;
+    const { isPrinted } = req.body;
+
+    await QRCode.updateMany(
+      { batchId },
+      { $set: { isPrinted: Boolean(isPrinted) } }
+    );
+
+    res.json({ success: true, message: `Batch ${batchId} marked as ${isPrinted ? 'Printed' : 'Not Printed'}` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const updateQRBatch = async (req, res) => {
   try {
     const { batchId } = req.params;
