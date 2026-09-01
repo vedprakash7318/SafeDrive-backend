@@ -315,9 +315,8 @@ const findEligiblePhysicalOrder = async (cleanPhone, expectedQrFor) => {
   const normExpected = (expectedQrFor || 'Car').trim().toLowerCase();
   const phonePattern = cleanPhone.length >= 8 ? cleanPhone.slice(-8) : cleanPhone;
 
-  // 1. Find all physical orders placed by this phone number (exact or suffix match)
+  // 1. Find all orders placed by this phone number (exact or suffix match)
   const allOrdersForPhone = await Order.find({
-    productType: 'PHYSICAL',
     $or: [
       { customerPhone: cleanPhone },
       { customerPhone: { $regex: phonePattern } },
@@ -1242,16 +1241,13 @@ export const sendActivationOTP = async (req, res) => {
       const qr = await QRCode.findOne({ publicToken: token });
       if (qr && ['GENERATED', 'IN STOCK', 'SOLD'].includes(qr.status)) {
         const expectedCategory = qr.qrFor || qrFor || 'Car';
-        const isDigitalQR = qr.qrType === 'DIGITAL' || qr.batchId === 'STORE-DIGITAL';
 
-        if (!isDigitalQR) {
-          const findRes = await findEligiblePhysicalOrder(cleanPhone, expectedCategory);
-          if (findRes.status !== 'MATCH') {
-            return res.status(400).json({
-              success: false,
-              message: findRes.message || `❌ No pending physical order found for [${expectedCategory}] on activation mobile number +91 ${cleanPhone}.`
-            });
-          }
+        const findRes = await findEligiblePhysicalOrder(cleanPhone, expectedCategory);
+        if (findRes.status !== 'MATCH') {
+          return res.status(400).json({
+            success: false,
+            message: findRes.message || `❌ No pending order found for [${expectedCategory}] on activation mobile number +91 ${cleanPhone}.`
+          });
         }
       }
     }
