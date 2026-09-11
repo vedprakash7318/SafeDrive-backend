@@ -10,6 +10,9 @@ const emergencyAlertSchema = new mongoose.Schema({
   alertStatus: { type: String, enum: ['TRIGGERED', 'ACKNOWLEDGED', 'RESOLVED'], default: 'TRIGGERED' },
   ip: { type: String },
   device: { type: String },
+  scannerPhone: { type: String },
+  callerPhone: { type: String },
+  reason: { type: String },
   location: {
     latitude: Number,
     longitude: Number,

@@ -11,6 +11,7 @@ import Order from '../models/Order.js';
 import QuotaWallet from '../models/QuotaWallet.js';
 import EmailOTP from '../models/EmailOTP.js';
 import { calculateNextStartNumber } from './adminController.js';
+import { sendPurchaseConfirmationEmail } from '../utils/emailService.js';
 
 // Initialize Razorpay Instance if keys are present
 const getRazorpayInstance = () => {
@@ -209,7 +210,8 @@ export const verifyAndAllocateQR = async (req, res) => {
       quantity: reqQuantity,
       razorpay_payment_id,
       razorpay_order_id,
-      razorpay_signature
+      razorpay_signature,
+      paymentMethod // NEW
     } = req.body;
 
     if (!name || !phone || !address) {
@@ -244,8 +246,10 @@ export const verifyAndAllocateQR = async (req, res) => {
       await EmailOTP.create({ email: cleanPhone, otp: '123456', expiresAt: new Date(Date.now() + 3600000), verified: true });
     }
 
-    // 2. Verify Razorpay Signature if in Live Mode and valid signature passed
+    // 2. Verify Razorpay Signature if in Live Mode and valid signature passed (Skip for COD)
+    const isCOD = paymentMethod === 'COD';
     if (
+      !isCOD &&
       process.env.RAZORPAY_KEY_SECRET &&
       razorpay_signature &&
       razorpay_signature !== 'simulated_test_sig' &&
@@ -264,30 +268,72 @@ export const verifyAndAllocateQR = async (req, res) => {
     }
 
     // 3. Find or Create User Account
-    let user = await User.findOne({ $or: [{ phone: cleanPhone }, { email: cleanEmail }] });
-    if (!user) {
-      const defaultPassword = await bcrypt.hash(`Safe@${cleanPhone.slice(-4)}`, 10);
-      user = await User.create({
-        name: name.trim(),
-        phone: cleanPhone,
-        email: cleanEmail,
-        gender: cleanGender,
-        address: address.trim(),
-        city: (city || '').trim(),
-        state: (state || '').trim(),
-        pincode: cleanPincode,
-        landmark: cleanLandmark,
-        isEmailVerified: true,
-        role: 'USER',
-        status: 'ACTIVE',
-        password: defaultPassword
+    let authUserId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET || 'supersecretjwtkey_replace_in_prod');
+        if (decoded && (decoded.id || decoded._id)) {
+          authUserId = decoded.id || decoded._id;
+        }
+      } catch (e) {}
+    }
+
+    let user = null;
+    if (authUserId) {
+      user = await User.findById(authUserId);
+    }
+
+    const normalized10Phone = cleanPhone.replace(/\D/g, '').slice(-10);
+
+    if (!user && normalized10Phone) {
+      user = await User.findOne({
+        $or: [
+          { phone: normalized10Phone },
+          { phone: `+91${normalized10Phone}` },
+          { phone: `91${normalized10Phone}` },
+          ...(cleanEmail ? [{ email: cleanEmail }] : [])
+        ]
       });
-    } else {
-      user.name = name.trim();
-      user.email = cleanEmail;
-      user.phone = cleanPhone;
+    }
+
+    if (!user) {
+      const defaultPassword = await bcrypt.hash(`Safe@${normalized10Phone.slice(-4)}`, 10);
+      try {
+        user = await User.create({
+          name: name.trim(),
+          phone: normalized10Phone,
+          email: cleanEmail || `${normalized10Phone}@safedrive.local`,
+          gender: cleanGender,
+          address: address.trim(),
+          city: (city || '').trim(),
+          state: (state || '').trim(),
+          pincode: cleanPincode,
+          landmark: cleanLandmark,
+          isEmailVerified: true,
+          role: 'USER',
+          status: 'ACTIVE',
+          password: defaultPassword
+        });
+      } catch (createErr) {
+        // Fallback: If phone already exists, fetch the existing user record
+        user = await User.findOne({
+          $or: [
+            { phone: normalized10Phone },
+            { phone: `+91${normalized10Phone}` },
+            { phone: `91${normalized10Phone}` }
+          ]
+        });
+        if (!user) throw createErr;
+      }
+    }
+
+    if (user) {
+      if (name && name.trim()) user.name = name.trim();
+      if (cleanEmail) user.email = cleanEmail;
+      user.phone = normalized10Phone;
       if (cleanGender) user.gender = cleanGender;
-      user.address = address.trim();
+      if (address && address.trim()) user.address = address.trim();
       if (city) user.city = city.trim();
       if (state) user.state = state.trim();
       if (pincode) user.pincode = cleanPincode;
@@ -302,18 +348,31 @@ export const verifyAndAllocateQR = async (req, res) => {
       product = await Product.findById(productId);
     }
     const productName = product ? product.name : 'QR Safety Kit';
-    const qrFor = product ? (product.qrFor || product.qrTypeName || 'Car') : 'Car';
+    let qrTypeDoc = null;
+    if (product?.qrTypeId) {
+      qrTypeDoc = await QRType.findById(product.qrTypeId);
+    }
+    if (!qrTypeDoc && product?.qrFor) {
+      qrTypeDoc = await QRType.findOne({ name: { $regex: new RegExp(`^${product.qrFor.trim()}$`, 'i') }, isDeleted: { $ne: true } });
+    }
+    if (!qrTypeDoc && product?.name) {
+      qrTypeDoc = await QRType.findOne({ name: { $regex: new RegExp(`^${product.name.trim()}$`, 'i') }, isDeleted: { $ne: true } });
+    }
+
+    const qrFor = qrTypeDoc?.name || product?.qrFor || product?.qrTypeName || 'Car';
     const isDigital = product ? (product.qrType === 'DIGITAL') : false;
     const productType = isDigital ? 'DIGITAL' : 'PHYSICAL';
 
     // Determine copies count
-    const qrTypeDoc = await QRType.findOne({ name: qrFor, isDeleted: { $ne: true } });
     const copiesPerSet = qrTypeDoc?.copiesPerSet || 2;
 
     const finalPaymentId = razorpay_payment_id || `pay_test_${Date.now()}`;
     const finalOrderId = razorpay_order_id || `order_${Date.now()}`;
     const unitPrice = product ? product.price : 299;
-    const finalAmount = unitPrice * quantity;
+    let finalAmount = unitPrice * quantity;
+    if (isCOD) {
+      finalAmount += 59; // 50 delivery + 9 GST
+    }
     const generatedOrderNumber = `ORD-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
     let allocatedQRs = [];
@@ -322,7 +381,7 @@ export const verifyAndAllocateQR = async (req, res) => {
     if (isDigital) {
       // Case A: DIGITAL PRODUCT PURCHASE
       // Generate Digital QR batch for each quantity purchased. Status is GENERATED (Inactive until scanned & registered with OTP)
-      const nextNum = await calculateNextStartNumber();
+      const nextNum = await calculateNextStartNumber(quantity);
       const newBatchItems = [];
 
       const isNonVehicleItem = qrTypeDoc?.isVehicle === false ||
@@ -331,31 +390,27 @@ export const verifyAndAllocateQR = async (req, res) => {
 
       for (let q = 0; q < quantity; q++) {
         const currentNum = nextNum + q;
-        const newProductId = `SD${String(currentNum).padStart(3, '0')}`;
-        const securityCode = !itemIsVehicle ? String(Math.floor(1000 + Math.random() * 9000)) : null;
-
-        for (let c = 1; c <= copiesPerSet; c++) {
-          const copyCode = `${newProductId}C${c}`;
-          const publicToken = crypto.randomBytes(16).toString('hex');
-          newBatchItems.push({
-            productId: newProductId,
-            batchId: 'STORE-DIGITAL',
-            copyCode,
-            publicToken,
-            status: 'GENERATED', // Inactive by default; activates on scan & OTP verification
-            userId: user._id,
-            qrFor,
-            qrType: 'DIGITAL',
-            isVehicle: itemIsVehicle,
-            category: itemIsVehicle ? 'VEHICLE' : 'NON_VEHICLE',
-            securityCode,
-            qrTypeId: qrTypeDoc?._id || null,
-            initialCalls: product?.initialCalls || 10,
-            initialMessages: product?.initialMessages || 20,
-            validityDays: product?.validityDays || 365,
-            renewalAmount: product?.renewalAmount || 199
-          });
-        }
+        const numFormatted = String(currentNum).padStart(4, '0');
+        const newProductId = `SD${numFormatted}`;
+        const publicToken = crypto.randomBytes(16).toString('hex');
+        newBatchItems.push({
+          productId: newProductId,
+          batchId: 'STORE-DIGITAL',
+          copyCode: newProductId,
+          publicToken,
+          status: 'GENERATED', // Inactive by default; activates on scan & OTP verification
+          userId: user._id,
+          qrFor,
+          qrType: 'DIGITAL',
+          isVehicle: itemIsVehicle,
+          category: itemIsVehicle ? 'VEHICLE' : 'NON_VEHICLE',
+          securityCode: itemIsVehicle ? null : numFormatted,
+          qrTypeId: qrTypeDoc?._id || null,
+          initialCalls: product?.initialCalls || 10,
+          initialMessages: product?.initialMessages || 20,
+          validityDays: product?.validityDays || 365,
+          renewalAmount: product?.renewalAmount || 199
+        });
       }
       allocatedQRs = await QRCode.insertMany(newBatchItems);
     } else {
@@ -388,11 +443,12 @@ export const verifyAndAllocateQR = async (req, res) => {
       amount: finalAmount,
       unitPrice,
       quantity,
-      paymentStatus: 'PAID',
+      paymentMethod: isCOD ? 'COD' : 'ONLINE',
+      paymentStatus: isCOD ? 'PENDING' : 'PAID',
       deliveryStatus: isDigital ? 'DELIVERED' : 'PROCESSING',
       orderNumber: generatedOrderNumber,
-      razorpayPaymentId: finalPaymentId,
-      razorpayOrderId: finalOrderId,
+      razorpayPaymentId: isCOD ? null : finalPaymentId,
+      razorpayOrderId: isCOD ? null : finalOrderId,
       isClaimed: false, // Remains false until scanned and registered
       claimedAt: null,
       claimedProductId: isDigital && allocatedQRs.length ? allocatedQRs[0].productId : null,
@@ -404,7 +460,8 @@ export const verifyAndAllocateQR = async (req, res) => {
         renewalAmount: product?.renewalAmount || 199,
         copiesPerSet,
         quantity,
-        unitPrice
+        unitPrice,
+        shippingFee: isCOD ? 59 : 0
       }
     });
 
@@ -437,12 +494,28 @@ export const verifyAndAllocateQR = async (req, res) => {
     // 8. Generate JWT Auth Token for Instant Auto-Login
     const token = jwt.sign(
       { id: user._id, role: user.role, phone: user.phone },
-      process.env.JWT_SECRET || 'secret',
+      process.env.JWT_SECRET || 'supersecretjwtkey_replace_in_prod',
       { expiresIn: '30d' }
     );
 
     // Clear used OTP record
     await EmailOTP.deleteMany({ email: cleanPhone });
+
+    // Send confirmation email asynchronously
+    if (cleanEmail) {
+      sendPurchaseConfirmationEmail(
+        cleanEmail,
+        user,
+        {
+          orderNumber: generatedOrderNumber,
+          productName,
+          amount: finalAmount,
+          quantity,
+          paymentMethod: isCOD ? 'COD' : 'ONLINE'
+        },
+        allocatedQRs.map(q => q.copyCode)
+      ).catch(err => console.error('Failed to send purchase confirmation email:', err));
+    }
 
     res.json({
       success: true,
@@ -464,12 +537,12 @@ export const verifyAndAllocateQR = async (req, res) => {
         landmark: user.landmark,
         role: user.role
       },
-      allocatedQRs: allocatedQRs.map(q => ({
+      allocatedQRs: (allocatedQRs || []).filter(Boolean).map(q => ({
         _id: q._id,
         copyCode: q.copyCode,
         publicToken: q.publicToken,
         productId: q.productId,
-        status: q.status
+        status: q?.status || 'GENERATED'
       }))
     });
   } catch (error) {

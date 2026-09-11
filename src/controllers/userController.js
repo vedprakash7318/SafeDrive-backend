@@ -14,6 +14,7 @@ import SystemSetting from '../models/SystemSetting.js';
 import ScanLog from '../models/ScanLog.js';
 import AuditLog from '../models/AuditLog.js';
 import Notification from '../models/Notification.js';
+import BankDetail from '../models/BankDetail.js';
 import crypto from 'crypto';
 
 // Initialize Razorpay Instance if keys are present
@@ -38,11 +39,14 @@ export const getDashboard = async (req, res) => {
       isDeleted: { $ne: true }
     }).populate('vehicleId');
 
-    // Ensure any non-vehicle QR has a 4-digit security PIN
+    // Ensure any non-vehicle QR has the 4-digit security PIN (last 4 digits of Product ID)
     for (const q of qrs) {
-      if (q.isVehicle === false && !q.securityCode) {
-        q.securityCode = String(Math.floor(1000 + Math.random() * 9000));
-        await QRCode.updateMany({ productId: q.productId }, { securityCode: q.securityCode });
+      if (q.isVehicle === false) {
+        const expectedPin = (q.productId || '').replace(/\D/g, '').padStart(4, '0').slice(-4);
+        if (q.securityCode !== expectedPin) {
+          q.securityCode = expectedPin;
+          await QRCode.updateMany({ productId: q.productId }, { securityCode: expectedPin });
+        }
       }
     }
 
@@ -583,15 +587,17 @@ export const renewSubscription = async (req, res) => {
 export const updateEmergencyContacts = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { vehicleId, emergencyContacts } = req.body;
+    const validContacts = Array.isArray(emergencyContacts)
+      ? emergencyContacts.filter(c => c && c.number && String(c.number).trim().replace(/\D/g, '').length >= 10)
+      : [];
 
-    if (!emergencyContacts || emergencyContacts.length < 2) {
-      return res.status(400).json({ success: false, message: 'Exactly 2 emergency contacts are required' });
+    if (validContacts.length < 1) {
+      return res.status(400).json({ success: false, message: 'At least 1 primary emergency contact is required' });
     }
 
     const vehicle = await Vehicle.findOneAndUpdate(
       { _id: vehicleId, userId },
-      { emergencyContacts },
+      { emergencyContacts: validContacts },
       { new: true }
     );
 
@@ -631,8 +637,12 @@ export const activatePurchasedQR = async (req, res) => {
       return res.status(400).json({ success: false, message: 'All vehicle details (Brand, Model, Number) are required.' });
     }
 
-    if (!emergencyContacts || emergencyContacts.length < 2) {
-      return res.status(400).json({ success: false, message: 'Please provide at least 2 emergency contacts.' });
+    const validContacts = Array.isArray(emergencyContacts)
+      ? emergencyContacts.filter(c => c && c.number && String(c.number).trim().replace(/\D/g, '').length >= 10)
+      : [];
+
+    if (validContacts.length < 1) {
+      return res.status(400).json({ success: false, message: 'Please provide at least 1 emergency contact.' });
     }
 
     const targetQR = await QRCode.findOne({ _id: qrId, userId });
@@ -802,6 +812,8 @@ export const getUserOrders = async (req, res) => {
         deliveryStatus: order.deliveryStatus,
         courierPartner: order.courierPartner,
         trackingNumber: order.trackingNumber,
+        trackingLink: order.trackingLink,
+        shippingLabelUrl: order.shippingLabelUrl,
         customerName: order.customerName,
         customerPhone: order.customerPhone,
         customerEmail: order.customerEmail,
@@ -818,14 +830,23 @@ export const getUserOrders = async (req, res) => {
           qrFor: order.productId.qrFor,
           imageUrl: order.productId.imageUrl
         } : null,
-        allocatedQRIds: order.allocatedQRIds || [],
-        metadata: {
-          copiesPerSet: order.metadata?.copiesPerSet || 2,
-          initialCalls: order.metadata?.initialCalls || 10,
-          initialMessages: order.metadata?.initialMessages || 20,
-          validityDays: order.metadata?.validityDays || 365,
-          renewalAmount: order.metadata?.renewalAmount || 199
-        },
+        allocatedQRIds: (order.allocatedQRIds || []).map(qr => {
+          // Hide sensitive physical tag data until it is activated by the user
+          if (order.productType === 'PHYSICAL' && qr.status !== 'ACTIVE') {
+            return { status: 'HIDDEN' };
+          }
+          return {
+            _id: qr._id,
+            productId: qr.productId,
+            copyCode: qr.copyCode,
+            publicToken: qr.publicToken,
+            status: qr.status,
+            isVehicle: qr.isVehicle,
+            securityCode: qr.securityCode,
+            activatedByName: qr.activatedByName,
+            activationDate: qr.activationDate
+          };
+        }),
         createdAt: order.createdAt
       };
     });
@@ -858,12 +879,27 @@ export const getUserPackages = async (req, res) => {
 };
 
 /**
+ * Get User Profile
+ */
+export const getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
  * Update User Contact & Delivery Profile
  */
 export const updateProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { name, email, whatsappNumber, gender, address, city, state, pincode } = req.body;
+    const { name, email, gender, address, city, state, pincode, landmark } = req.body;
 
     const user = await User.findById(userId);
     if (!user) {
@@ -872,8 +908,7 @@ export const updateProfile = async (req, res) => {
 
     if (name) user.name = name.trim();
     if (email) user.email = email.trim().toLowerCase();
-    if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
-    if (gender) user.gender = gender.trim().toUpperCase();
+        if (gender) user.gender = gender.trim().toUpperCase();
     if (address) user.address = address.trim();
     if (city) user.city = city.trim();
     if (state) user.state = state.trim();
@@ -889,8 +924,7 @@ export const updateProfile = async (req, res) => {
         phone: user.phone,
         email: user.email,
         gender: user.gender,
-        whatsappNumber: user.whatsappNumber,
-        address: user.address,
+                address: user.address,
         city: user.city,
         state: user.state,
         pincode: user.pincode,
@@ -1110,8 +1144,7 @@ export const updateUserQRDetails = async (req, res) => {
     const {
       name,
       email,
-      whatsappNumber,
-      gender,
+            gender,
       address,
       city,
       state,
@@ -1140,8 +1173,7 @@ export const updateUserQRDetails = async (req, res) => {
     if (user) {
       if (name) user.name = name.trim();
       if (email) user.email = email.trim().toLowerCase();
-      if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
-      if (gender) user.gender = gender;
+            if (gender) user.gender = gender;
       if (address) user.address = address.trim();
       if (city) user.city = city.trim();
       if (state) user.state = state.trim();
@@ -1201,8 +1233,7 @@ export const updateUserQRDetails = async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        whatsappNumber: user.whatsappNumber,
-        address: user.address,
+                address: user.address,
         city: user.city,
         state: user.state
       },
@@ -1216,9 +1247,28 @@ export const updateUserQRDetails = async (req, res) => {
 export const getUserNotifications = async (req, res) => {
   try {
     const userId = req.user._id;
-    const notifications = await Notification.find({ userId }).sort({ createdAt: -1 }).limit(50);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+
+    const query = { userId };
+    
+    const notifications = await Notification.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+      
+    const totalCount = await Notification.countDocuments(query);
     const unreadCount = await Notification.countDocuments({ userId, isRead: false });
-    res.json({ success: true, notifications, unreadCount });
+
+    res.json({ 
+      success: true, 
+      notifications, 
+      unreadCount,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limit),
+      currentPage: page
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -1255,4 +1305,40 @@ export const registerFCMToken = async (req, res) => {
   }
 };
 
+export const getBankDetails = async (req, res) => {
+  try {
+    const bankDetails = await BankDetail.findOne({ userId: req.user._id });
+    res.json({ success: true, bankDetails });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
+export const updateBankDetails = async (req, res) => {
+  try {
+    const { accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body;
+    let bankDetails = await BankDetail.findOne({ userId: req.user._id });
+
+    if (bankDetails) {
+      if (accountHolderName !== undefined) bankDetails.accountHolderName = accountHolderName.trim();
+      if (accountNumber !== undefined) bankDetails.accountNumber = accountNumber.trim();
+      if (ifscCode !== undefined) bankDetails.ifscCode = ifscCode.trim().toUpperCase();
+      if (bankName !== undefined) bankDetails.bankName = bankName.trim();
+      if (upiId !== undefined) bankDetails.upiId = upiId.trim();
+      await bankDetails.save();
+    } else {
+      bankDetails = await BankDetail.create({
+        userId: req.user._id,
+        accountHolderName: accountHolderName?.trim(),
+        accountNumber: accountNumber?.trim(),
+        ifscCode: ifscCode?.trim().toUpperCase(),
+        bankName: bankName?.trim(),
+        upiId: upiId?.trim()
+      });
+    }
+
+    res.json({ success: true, message: 'Bank details updated successfully', bankDetails });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

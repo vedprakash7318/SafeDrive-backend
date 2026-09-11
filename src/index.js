@@ -10,11 +10,14 @@ import adminRoutes from './routes/adminRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import purchaseRoutes from './routes/purchaseRoutes.js';
-
+import dealerRoutes from './routes/dealerRoutes.js';
 dotenv.config();
 
 // Connect to Database
 connectDB();
+
+import { initShipprimeCron } from './cron/shipprimeSync.js';
+initShipprimeCron();
 
 const app = express();
 
@@ -41,6 +44,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/purchase', purchaseRoutes);
+app.use('/api/dealer', dealerRoutes);
 
 // 404 Handler
 app.use((req, res) => {

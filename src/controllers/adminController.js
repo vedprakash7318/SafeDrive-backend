@@ -18,8 +18,13 @@ import SystemSetting from '../models/SystemSetting.js';
 import Product from '../models/Product.js';
 import Order from '../models/Order.js';
 import ScanLog from '../models/ScanLog.js';
-import ContactInquiry from '../models/ContactInquiry.js';
+import Notification from '../models/Notification.js';
+import Counter from '../models/Counter.js';
+import BankDetail from '../models/BankDetail.js';
+import FAQ from '../models/FAQ.js';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
+import { sendSystemAlertEmail, sendOrderDispatchEmail } from '../utils/emailService.js';
+import { createForwardShipment, cancelForwardShipment, cancelReturnShipment, createReturnShipment } from '../utils/shipprimeService.js';
 
 // ==========================================
 // 1. STATS & ANALYTICS
@@ -72,6 +77,38 @@ export const getStats = async (req, res) => {
     const recentQRs = await QRCode.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }).limit(5).populate('userId vehicleId');
     const recentAlerts = await EmergencyAlert.find().sort({ createdAt: -1 }).limit(5);
 
+    // Dynamic Low Stock Checks for Dashboard & Emails
+    const productCategories = await Product.distinct('qrFor', { isActive: { $ne: false }, isDeleted: { $ne: true }, qrType: 'PHYSICAL' });
+    const lowStockAlerts = [];
+    
+    for (const category of productCategories) {
+      if (!category) continue;
+      const count = await QRCode.countDocuments({ qrFor: category, status: 'IN STOCK', isDeleted: { $ne: true } });
+      
+      if (count <= 10) {
+        lowStockAlerts.push({ category, count });
+        
+        const alertTitle = `Low Stock Alert: ${category}`;
+        const alertMessage = `The physical inventory for **${category}** tags has dropped to **${count}**. Please restock soon to prevent order delays.`;
+        
+        const recentAlert = await Notification.findOne({
+          type: 'SYSTEM',
+          title: alertTitle,
+          createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        });
+        
+        if (!recentAlert) {
+          const admins = await User.find({ role: { $in: ['ADMIN', 'SUPER_ADMIN'] } });
+          for (const admin of admins) {
+            await Notification.create({ userId: admin._id, title: alertTitle, message: alertMessage, type: 'SYSTEM' });
+            if (admin.email) {
+              await sendSystemAlertEmail(admin.email, alertTitle, alertMessage).catch(() => {});
+            }
+          }
+        }
+      }
+    }
+
     res.json({
       success: true,
       stats: {
@@ -86,7 +123,8 @@ export const getStats = async (req, res) => {
         totalCallsUsed,
         totalMessagesUsed,
         emergencyAlertsCount,
-        totalRevenue
+        totalRevenue,
+        lowStockAlerts
       },
       recentQRs,
       recentAlerts
@@ -112,7 +150,7 @@ export const getQRTypes = async (req, res) => {
 
 export const createQRType = async (req, res) => {
   try {
-    const { name, copiesPerSet = 2, category = 'VEHICLE', isVehicle } = req.body;
+    const { name, copiesPerSet = 2, category = 'VEHICLE', isVehicle, templateImage } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ success: false, message: 'QR Type name is required' });
     }
@@ -125,6 +163,7 @@ export const createQRType = async (req, res) => {
       name: cleanName,
       category: finalCategory,
       isVehicle: finalIsVehicle,
+      templateImage: templateImage || null,
       copiesPerSet: Math.max(1, Math.min(20, parseInt(copiesPerSet, 10) || 2))
     });
 
@@ -137,7 +176,7 @@ export const createQRType = async (req, res) => {
 export const updateQRType = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, copiesPerSet, category, isVehicle } = req.body;
+    const { name, copiesPerSet, category, isVehicle, templateImage } = req.body;
 
     const qrType = await QRType.findById(id);
     if (!qrType || qrType.isDeleted) {
@@ -145,6 +184,7 @@ export const updateQRType = async (req, res) => {
     }
 
     if (name) qrType.name = name.trim();
+    if (templateImage !== undefined) qrType.templateImage = templateImage;
     if (category !== undefined) {
       qrType.category = category.toUpperCase();
       qrType.isVehicle = category.toUpperCase() !== 'NON_VEHICLE';
@@ -305,44 +345,48 @@ export const restoreTag = async (req, res) => {
 // ==========================================
 // 4. AUTO-INCREMENT SEQUENCE CALCULATION
 // ==========================================
-export const calculateNextStartNumber = async () => {
-  const existingQRs = await QRCode.find(
-    { $or: [{ productId: /^SD\d+/i }, { copyCode: /^SD\d+/i }] },
-    { productId: 1, copyCode: 1 }
-  );
+export const calculateNextStartNumber = async (incrementBy = 0) => {
+  let counter = await Counter.findById('qrcode_sequence');
 
-  let maxNum = 0;
-  for (const qr of existingQRs) {
-    if (qr.productId) {
-      const match = qr.productId.match(/\d+/);
-      if (match) {
-        const num = parseInt(match[0], 10);
-        if (num > maxNum) maxNum = num;
+  if (!counter) {
+    const existingQRs = await QRCode.find(
+      { $or: [{ productId: /^SD\d+/i }, { copyCode: /^SD\d+/i }] },
+      { productId: 1, copyCode: 1 }
+    );
+    let maxNum = 0;
+    for (const qr of existingQRs) {
+      if (qr.productId) {
+        const match = qr.productId.match(/\d+/);
+        if (match) {
+          const num = parseInt(match[0], 10);
+          if (num > maxNum) maxNum = num;
+        }
       }
     }
-    if (qr.copyCode) {
-      const match = qr.copyCode.match(/^SD(\d+)/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNum) maxNum = num;
-      }
-    }
+    
+    counter = await Counter.findOneAndUpdate(
+      { _id: 'qrcode_sequence' },
+      { $setOnInsert: { seq: maxNum } },
+      { new: true, upsert: true }
+    );
   }
 
-  let nextStart = maxNum + 1;
-
-  // Double check uniqueness in DB to ensure no duplicate copyCode collision
-  while (await QRCode.exists({ copyCode: new RegExp(`^SD0*${nextStart}C\\d+`, 'i') })) {
-    nextStart++;
+  if (incrementBy > 0) {
+    const updatedCounter = await Counter.findOneAndUpdate(
+      { _id: 'qrcode_sequence' },
+      { $inc: { seq: incrementBy } },
+      { new: true }
+    );
+    return updatedCounter.seq - incrementBy + 1;
   }
 
-  return nextStart;
+  return counter.seq + 1;
 };
 
 export const getNextSequenceNumber = async (req, res) => {
   try {
     const nextNumber = await calculateNextStartNumber();
-    const formattedCode = `SD${String(nextNumber).padStart(3, '0')}`;
+    const formattedCode = `SD${String(nextNumber).padStart(4, '0')}`;
     res.json({
       success: true,
       nextNumber,
@@ -381,14 +425,14 @@ export const generateQRBatch = async (req, res) => {
     const chosenQrType = chosenQRFormatDoc ? (chosenQRFormatDoc.type || 'PHYSICAL') : ((qrType || 'PHYSICAL').toUpperCase() === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL');
 
     const count = parseInt(quantity, 10);
-    if (isNaN(count) || count <= 0 || count > 500) {
-      return res.status(400).json({ success: false, message: 'Quantity must be between 1 and 500 sets' });
+    if (isNaN(count) || count <= 0 || count > 1000) {
+      return res.status(400).json({ success: false, message: 'Quantity must be between 1 and 1000 sets' });
     }
 
     const cleanTag = tag.trim().toUpperCase().replace(/\s+/g, '-');
 
-    // Robust start number calculation
-    const startNum = await calculateNextStartNumber();
+    // Robust start number calculation using atomic counter
+    const startNum = await calculateNextStartNumber(count);
 
     // Determine copiesPerSet from selected QR For (Vehicle/Item Type)
     let copiesPerSet = 2;
@@ -422,30 +466,24 @@ export const generateQRBatch = async (req, res) => {
 
     for (let i = 0; i < count; i++) {
       const num = startNum + i;
-      const numFormatted = String(num).padStart(3, '0');
+      const numFormatted = String(num).padStart(4, '0');
       const productId = `SD${numFormatted}`;
-      // Generate unique 4-digit PIN for non-vehicles (Luggage, Bag, etc.)
-      const securityCode = !isVehicle ? String(Math.floor(1000 + Math.random() * 9000)) : null;
-
-      // Generate C1..C(copiesPerSet)
-      for (let c = 1; c <= copiesPerSet; c++) {
-        const token = crypto.randomBytes(16).toString('hex');
-        const copy = new QRCode({
-          productId,
-          batchId: cleanTag,
-          qrFor: chosenQrFor,
-          qrType: chosenQrType,
-          isVehicle,
-          category: isVehicle ? 'VEHICLE' : 'NON_VEHICLE',
-          securityCode,
-          qrTypeId: chosenQRTypeDoc?._id || qrTypeId || null,
-          qrFormatId: chosenQRFormatDoc?._id || qrFormatId || null,
-          copyCode: `${productId}C${c}`,
-          publicToken: token,
-          status: 'IN STOCK'
-        });
-        generatedQRs.push(copy);
-      }
+      const token = crypto.randomBytes(16).toString('hex');
+      const copy = new QRCode({
+        productId,
+        batchId: cleanTag,
+        qrFor: chosenQrFor,
+        qrType: chosenQrType,
+        isVehicle,
+        category: isVehicle ? 'VEHICLE' : 'NON_VEHICLE',
+        qrTypeId: chosenQRTypeDoc?._id || qrTypeId || null,
+        qrFormatId: chosenQRFormatDoc?._id || qrFormatId || null,
+        copyCode: productId,
+        publicToken: token,
+        securityCode: isVehicle ? null : numFormatted,
+        status: 'IN STOCK'
+      });
+      generatedQRs.push(copy);
     }
 
     await QRCode.insertMany(generatedQRs);
@@ -470,9 +508,8 @@ export const generateQRBatch = async (req, res) => {
         groupName: cleanTag,
         qrFor: chosenQrFor,
         qrType: chosenQrType,
-        copiesPerSet,
         quantity: count,
-        totalCopies: count * copiesPerSet,
+        totalCopies: count,
         startNumber: startNum,
         endNumber: startNum + count - 1
       }
@@ -480,7 +517,7 @@ export const generateQRBatch = async (req, res) => {
 
     res.json({
       success: true,
-      message: `🎉 Successfully generated ${count} QR sets (${count * copiesPerSet} stickers [C1-C${copiesPerSet}]: SD${String(startNum).padStart(3, '0')} to SD${String(startNum + count - 1).padStart(3, '0')}) for [${chosenQrFor} • ${chosenQrType}] in Group [${cleanTag}]!`,
+      message: `🎉 Successfully generated ${count} QR stickers (SD${String(startNum).padStart(4, '0')} to SD${String(startNum + count - 1).padStart(4, '0')}) for [${chosenQrFor} • ${chosenQrType}] in Group [${cleanTag}]!`,
       generatedCount: generatedQRs.length
     });
   } catch (error) {
@@ -506,9 +543,11 @@ export const getQRGroups = async (req, res) => {
           lastProduct: { $max: '$productId' },
           uniqueProducts: { $addToSet: '$productId' },
           totalStickers: { $sum: 1 },
+          unprintedCount: { $sum: { $cond: [{ $eq: ['$isPrinted', false] }, 1, 0] } },
           generatedCount: { $sum: { $cond: [{ $eq: ['$status', 'GENERATED'] }, 1, 0] } },
           inStockCount: { $sum: { $cond: [{ $eq: ['$status', 'IN STOCK'] }, 1, 0] } },
-          soldCount: { $sum: { $cond: [{ $in: ['$status', ['SOLD', 'ACTIVE']] }, 1, 0] } },
+          assignedCount: { $sum: { $cond: [{ $eq: ['$status', 'ASSIGNED_TO_DEALER'] }, 1, 0] } },
+          soldCount: { $sum: { $cond: [{ $eq: ['$status', 'SOLD'] }, 1, 0] } },
           activeCount: { $sum: { $cond: [{ $eq: ['$status', 'ACTIVE'] }, 1, 0] } },
           suspendedCount: { $sum: { $cond: [{ $eq: ['$status', 'SUSPENDED'] }, 1, 0] } },
           createdAt: { $min: '$createdAt' }
@@ -520,13 +559,14 @@ export const getQRGroups = async (req, res) => {
           qrFor: 1,
           qrType: 1,
           qrTypeId: 1,
-          isPrinted: 1,
+          isPrinted: { $eq: ['$unprintedCount', 0] },
           totalSets: { $size: '$uniqueProducts' },
           totalStickers: 1,
           firstProduct: 1,
           lastProduct: 1,
           generatedCount: 1,
           inStockCount: 1,
+          assignedCount: 1,
           soldCount: 1,
           activeCount: 1,
           suspendedCount: 1,
@@ -547,12 +587,16 @@ export const toggleBatchPrintStatus = async (req, res) => {
     const { batchId } = req.params;
     const { isPrinted } = req.body;
 
+    if (isPrinted === false) {
+      return res.status(400).json({ success: false, message: 'Printed batches cannot be unmarked.' });
+    }
+
     await QRCode.updateMany(
       { batchId },
-      { $set: { isPrinted: Boolean(isPrinted) } }
+      { $set: { isPrinted: true } }
     );
 
-    res.json({ success: true, message: `Batch ${batchId} marked as ${isPrinted ? 'Printed' : 'Not Printed'}` });
+    res.json({ success: true, message: `Batch ${batchId} marked as Printed` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -642,13 +686,87 @@ export const deleteQRBatch = async (req, res) => {
 export const getQRsByGroup = async (req, res) => {
   try {
     const { groupName } = req.params;
-    const qrs = await QRCode.find({ batchId: groupName, isDeleted: { $ne: true } })
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 100;
+    const search = req.query.search ? req.query.search.trim() : '';
+    const status = req.query.status || 'ALL';
+
+    const skip = (page - 1) * limit;
+
+    // 1. Build Match Query for QRCode
+    const matchQuery = { batchId: groupName, isDeleted: { $ne: true } };
+
+    if (status !== 'ALL') {
+      matchQuery.status = status;
+    }
+
+    if (search) {
+      // Find matching users and vehicles
+      const [users, vehicles] = await Promise.all([
+        User.find({
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { phone: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } }
+          ]
+        }).select('_id'),
+        Vehicle.find({
+          $or: [
+            { vehicleNumber: { $regex: search, $options: 'i' } },
+            { vehicleName: { $regex: search, $options: 'i' } },
+            { vehicleBrand: { $regex: search, $options: 'i' } }
+          ]
+        }).select('_id')
+      ]);
+
+      const userIds = users.map(u => u._id);
+      const vehicleIds = vehicles.map(v => v._id);
+
+      matchQuery.$or = [
+        { productId: { $regex: search, $options: 'i' } },
+        { copyCode: { $regex: search, $options: 'i' } }
+      ];
+      
+      if (userIds.length > 0) matchQuery.$or.push({ userId: { $in: userIds } }, { buyerId: { $in: userIds } });
+      if (vehicleIds.length > 0) matchQuery.$or.push({ vehicleId: { $in: vehicleIds } });
+    }
+
+    // 2. Fetch distinct productIds that match the query
+    const pipeline = [
+      { $match: matchQuery },
+      { $group: { _id: "$productId" } },
+      { $sort: { _id: 1 } },
+      { $facet: {
+          metadata: [{ $count: "total" }],
+          data: [{ $skip: skip }, { $limit: limit }]
+      }}
+    ];
+
+    const aggResult = await QRCode.aggregate(pipeline);
+    const totalItems = aggResult[0].metadata[0] ? aggResult[0].metadata[0].total : 0;
+    const paginatedProductIds = aggResult[0].data.map(d => d._id);
+
+    // 3. Fetch all QRCodes for those paginated productIds
+    const qrs = await QRCode.find({ productId: { $in: paginatedProductIds } })
       .populate('userId', 'name phone email')
+      .populate('buyerId', 'name phone email')
       .populate('vehicleId', 'vehicleBrand vehicleName vehicleNumber emergencyContacts')
       .sort({ productId: 1, copyCode: 1 });
 
+    // Ensure non-vehicle tags have the proper 4-digit PIN matching productId
+    for (const q of qrs) {
+      if (q.isVehicle === false) {
+        const expectedPin = (q.productId || '').replace(/\D/g, '').padStart(4, '0').slice(-4);
+        if (q.securityCode !== expectedPin) {
+          q.securityCode = expectedPin;
+          await QRCode.updateMany({ productId: q.productId }, { securityCode: expectedPin });
+        }
+      }
+    }
+
     const kitMap = {};
     for (const q of qrs) {
+      const pinCode = q.isVehicle === false ? (q.securityCode || (q.productId || '').replace(/\D/g, '').padStart(4, '0').slice(-4)) : null;
       if (!kitMap[q.productId]) {
         kitMap[q.productId] = {
           productId: q.productId,
@@ -657,10 +775,12 @@ export const getQRsByGroup = async (req, res) => {
           qrType: q.qrType || 'PHYSICAL',
           isVehicle: q.isVehicle !== false,
           category: q.category || (q.isVehicle === false ? 'NON_VEHICLE' : 'VEHICLE'),
-          securityCode: q.securityCode || null,
+          securityCode: pinCode,
           status: q.status,
           copies: [],
-          user: q.userId ? { _id: q.userId._id, name: q.userId.name, phone: q.userId.phone, email: q.userId.email } : null,
+          user: q.userId 
+            ? { _id: q.userId._id, name: q.userId.name, phone: q.userId.phone, email: q.userId.email, isOwner: true } 
+            : (q.buyerId ? { _id: q.buyerId._id, name: q.buyerId.name, phone: q.buyerId.phone, email: q.buyerId.email, isBuyer: true } : null),
           vehicle: q.vehicleId ? { _id: q.vehicleId._id, vehicleName: q.vehicleId.vehicleName, vehicleBrand: q.vehicleId.vehicleBrand, vehicleNumber: q.vehicleId.vehicleNumber } : null,
           activationDate: q.activationDate,
           expiryDate: q.expiryDate,
@@ -673,7 +793,7 @@ export const getQRsByGroup = async (req, res) => {
         copyCode: q.copyCode,
         publicToken: q.publicToken,
         isVehicle: q.isVehicle !== false,
-        securityCode: q.securityCode || null,
+        securityCode: pinCode,
         status: q.status
       });
 
@@ -683,27 +803,75 @@ export const getQRsByGroup = async (req, res) => {
       else if (q.status === 'SUSPENDED') kitMap[q.productId].status = 'SUSPENDED';
     }
 
-    const uniqueKits = Object.values(kitMap);
-    const totalKits = uniqueKits.length;
+    const paginatedKits = Object.values(kitMap);
+
+    // 4. Calculate overall stats for the group
     const isDigitalBatch = groupName === 'STORE-DIGITAL';
-    const inStockKits = isDigitalBatch ? 0 : uniqueKits.filter(k => k.status === 'IN STOCK' && !k.user).length;
-    const activeKits = uniqueKits.filter(k => k.status === 'ACTIVE').length;
-    const soldKits = uniqueKits.filter(k => k.status === 'SOLD' || (k.user && k.status !== 'ACTIVE')).length;
-    const generatedKits = uniqueKits.filter(k => k.status === 'GENERATED').length;
+    const totalStickers = await QRCode.countDocuments({ batchId: groupName, isDeleted: { $ne: true } });
+    
+    let groupStats = { totalKits: 0, totalStickers, inStockKits: 0, activeKits: 0, soldKits: 0, generatedKits: 0 };
+    
+    if (totalStickers > 0) {
+       const statsPipeline = [
+         { $match: { batchId: groupName, isDeleted: { $ne: true } } },
+         { $group: {
+             _id: "$productId",
+             statuses: { $push: "$status" },
+             hasUser: { $max: { $cond: [{ $ifNull: ["$userId", false] }, 1, { $cond: [{ $ifNull: ["$buyerId", false] }, 1, 0] }] } }
+         }},
+         { $project: {
+             status: {
+               $cond: [
+                 { $in: ["ACTIVE", "$statuses"] }, "ACTIVE",
+                 { $cond: [
+                   { $and: [{ $in: ["SOLD", "$statuses"] }, { $not: { $in: ["ACTIVE", "$statuses"] } }] }, "SOLD",
+                   { $cond: [
+                     { $and: [{ $in: ["EXPIRED", "$statuses"] }, { $not: { $in: ["ACTIVE", "$statuses"] } }] }, "EXPIRED",
+                     { $cond: [
+                       { $in: ["SUSPENDED", "$statuses"] }, "SUSPENDED",
+                       { $arrayElemAt: ["$statuses", 0] }
+                     ]}
+                   ]}
+                 ]}
+               ]
+             },
+             hasUser: 1
+         }},
+         { $group: {
+             _id: null,
+             totalKits: { $sum: 1 },
+             activeKits: { $sum: { $cond: [{ $eq: ["$status", "ACTIVE"] }, 1, 0] } },
+             soldKits: { $sum: { $cond: [{ $or: [{ $eq: ["$status", "SOLD"] }, { $and: [{ $eq: ["$hasUser", 1] }, { $ne: ["$status", "ACTIVE"] }] }] }, 1, 0] } },
+             generatedKits: { $sum: { $cond: [{ $eq: ["$status", "GENERATED"] }, 1, 0] } },
+             inStockKits: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "IN STOCK"] }, { $eq: ["$hasUser", 0] }] }, 1, 0] } }
+         }}
+       ];
+       const statsResult = await QRCode.aggregate(statsPipeline);
+       if (statsResult.length > 0) {
+         const sr = statsResult[0];
+         groupStats = {
+           totalKits: sr.totalKits,
+           totalStickers,
+           inStockKits: isDigitalBatch ? 0 : sr.inStockKits,
+           activeKits: sr.activeKits,
+           soldKits: sr.soldKits,
+           generatedKits: sr.generatedKits
+         };
+       }
+    }
 
     res.json({
       success: true,
       groupName,
-      stats: {
-        totalKits,
-        totalStickers: qrs.length,
-        inStockKits,
-        activeKits,
-        soldKits,
-        generatedKits
-      },
-      kits: uniqueKits,
-      qrs
+      stats: groupStats,
+      kits: paginatedKits,
+      qrs: qrs,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+        limit
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -713,47 +881,6 @@ export const getQRsByGroup = async (req, res) => {
 // ==========================================
 // 6. QR INVENTORY & STATUS
 // ==========================================
-export const getQRs = async (req, res) => {
-  try {
-    const { status, batchId, qrType, search, page = 1, limit = 100 } = req.query;
-    const query = { isDeleted: { $ne: true } };
-
-    if (status && status !== 'ALL') {
-      query.status = status;
-    }
-    if (batchId && batchId !== 'ALL') {
-      query.batchId = batchId;
-    }
-    if (qrType && qrType !== 'ALL') {
-      query.qrType = qrType;
-    }
-    if (search) {
-      query.$or = [
-        { copyCode: { $regex: search, $options: 'i' } },
-        { productId: { $regex: search, $options: 'i' } },
-        { publicToken: { $regex: search, $options: 'i' } }
-      ];
-    }
-
-    const total = await QRCode.countDocuments(query);
-    const qrs = await QRCode.find(query)
-      .populate('userId', 'name phone')
-      .populate('vehicleId', 'vehicleName vehicleBrand vehicleNumber')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit, 10));
-
-    res.json({
-      success: true,
-      total,
-      page: parseInt(page, 10),
-      pages: Math.ceil(total / limit),
-      qrs
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
 
 export const getQRById = async (req, res) => {
   try {
@@ -982,8 +1109,15 @@ export const getUsers = async (req, res) => {
         
         // Count by unique Kit sets + unclaimed physical orders (multiplying by remaining unclaimed quantity)
         const distinctKitsBought = new Set(qrs.map(q => q.productId || q.copyCode));
+        let cancelledCount = qrs.filter(q => q.status === 'CANCELLED').length;
+        let returnedCount = qrs.filter(q => q.status === 'RETURNED').length;
+
         for (const ord of userOrders) {
-          if (ord.productType === 'PHYSICAL' && !ord.isClaimed) {
+          if (ord.status === 'CANCELLED' || ord.deliveryStatus === 'CANCELLED') {
+            cancelledCount += ord.quantity || 1;
+          } else if (ord.status === 'RETURNED' || ord.deliveryStatus === 'RETURNED') {
+            returnedCount += ord.quantity || 1;
+          } else if (ord.productType === 'PHYSICAL' && !ord.isClaimed) {
             const totalQty = Math.max(1, ord.quantity || 1);
             const claimed = ord.claimedCount || 0;
             const remainingQty = Math.max(0, totalQty - claimed);
@@ -994,8 +1128,9 @@ export const getUsers = async (req, res) => {
         }
 
         const activeKitsSet = new Set(qrs.filter((q) => q.status === 'ACTIVE').map(q => q.productId || q.copyCode));
+        const suspendedKitsSet = new Set(qrs.filter((q) => q.status === 'SUSPENDED').map(q => q.productId || q.copyCode));
         const digitalKitsSet = new Set(qrs.filter((q) => q.qrType === 'DIGITAL').map(q => q.productId || q.copyCode));
-        const pendingCount = Math.max(0, distinctKitsBought.size - activeKitsSet.size);
+        const pendingCount = Math.max(0, distinctKitsBought.size - activeKitsSet.size - suspendedKitsSet.size);
 
         return {
           ...u.toObject(),
@@ -1007,8 +1142,11 @@ export const getUsers = async (req, res) => {
           totalSpent,
           totalQRsBought: distinctKitsBought.size,
           activeQRsCount: activeKitsSet.size,
+          suspendedQRsCount: suspendedKitsSet.size,
           digitalQRsCount: digitalKitsSet.size,
-          soldQRsCount: pendingCount
+          soldQRsCount: pendingCount,
+          cancelledQRsCount: cancelledCount,
+          returnedQRsCount: returnedCount
         };
       })
     );
@@ -1113,6 +1251,7 @@ export const getUserById = async (req, res) => {
       if (q.status === 'ACTIVE') kitMap[q.productId].status = 'ACTIVE';
       else if (q.status === 'SOLD' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'SOLD';
       else if (q.status === 'EXPIRED' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'EXPIRED';
+      else if (q.status === 'SUSPENDED' && kitMap[q.productId].status !== 'ACTIVE') kitMap[q.productId].status = 'SUSPENDED';
     }
 
     // Attach QuotaWallet, Addons, and Associated Order to each unique kit
@@ -1185,7 +1324,13 @@ export const getUserById = async (req, res) => {
         const claimed = order.claimedCount || 0;
         const remainingQty = Math.max(0, totalQty - claimed);
         if (remainingQty > 0) {
-          totalPendingKitsQuantity += remainingQty;
+          const isCancelled = order.status === 'CANCELLED' || order.deliveryStatus === 'CANCELLED';
+          const isReturned = order.status === 'RETURNED' || order.deliveryStatus === 'RETURNED';
+
+          if (!isCancelled && !isReturned) {
+            totalPendingKitsQuantity += remainingQty;
+          }
+
           const pendingKey = `ORDER_${order.orderNumber || order._id}_REMAINING`;
           if (!kitMap[pendingKey]) {
             kitMap[pendingKey] = {
@@ -1193,7 +1338,7 @@ export const getUserById = async (req, res) => {
               batchId: 'STORE-PHYSICAL-ORDER',
               qrFor: order.productName || order.qrFor || 'Car',
               qrType: 'PHYSICAL',
-              status: 'PENDING_DELIVERY_SCAN',
+              status: isCancelled ? 'CANCELLED' : isReturned ? 'RETURNED' : 'PENDING_DELIVERY_SCAN',
               deliveryStatus: order.deliveryStatus || 'PROCESSING',
               copies: [],
               quantity: remainingQty,
@@ -1258,7 +1403,10 @@ export const getUserById = async (req, res) => {
         activeKits: activeKitsCount,
         digitalKits: digitalKitsCount,
         pendingKits: pendingScanCount,
+        suspendedKits: uniqueKits.filter(k => k.status === 'SUSPENDED').length,
         physicalPendingKits: totalPendingKitsQuantity,
+        cancelledKits: uniqueKits.filter(k => k.status === 'CANCELLED' || k.deliveryStatus === 'CANCELLED' || k.order?.status === 'CANCELLED' || k.order?.deliveryStatus === 'CANCELLED').length,
+        returnedKits: uniqueKits.filter(k => k.status === 'RETURNED' || k.deliveryStatus === 'RETURNED' || k.order?.status === 'RETURNED' || k.order?.deliveryStatus === 'RETURNED').length,
         expiredKits: uniqueKits.filter(k => k.status === 'EXPIRED').length,
         totalVehicles: vehicles.length,
         totalOrders: orders.length,
@@ -1554,7 +1702,8 @@ export const createScanReason = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Reason title is required' });
     }
 
-    const targetCategory = applicableTo || category || 'ALL';
+    const targetCategory = (applicableTo === 'ALL' || applicableTo === undefined) ? null : applicableTo;
+    
     const count = await ScanReason.countDocuments({ isDeleted: { $ne: true } });
     const reason = await ScanReason.create({
       title: title.trim(),
@@ -1562,7 +1711,6 @@ export const createScanReason = async (req, res) => {
       iconKey,
       color,
       applicableTo: targetCategory,
-      category: targetCategory,
       isOtherType: Boolean(isOtherType),
       order: count + 1,
       isActive: true
@@ -1589,11 +1737,9 @@ export const updateScanReason = async (req, res) => {
     if (iconKey !== undefined) reason.iconKey = iconKey;
     if (color !== undefined) reason.color = color;
     if (applicableTo !== undefined) {
-      reason.applicableTo = applicableTo;
-      reason.category = applicableTo;
+      reason.applicableTo = applicableTo === 'ALL' ? null : applicableTo;
     } else if (category !== undefined) {
-      reason.applicableTo = category;
-      reason.category = category;
+      reason.applicableTo = category === 'ALL' ? null : category;
     }
     if (isOtherType !== undefined) reason.isOtherType = isOtherType;
     if (isActive !== undefined) reason.isActive = isActive;
@@ -1673,7 +1819,18 @@ export const updateSettings = async (req, res) => {
       renewalBonusMessages,
       pushNotificationCooldownSeconds,
       pushNotificationRateLimitHours,
-      pushNotificationRateLimitCount
+      pushNotificationRateLimitCount,
+      callCooldownSeconds,
+      callRateLimitHours,
+      callRateLimitCount,
+      messageCooldownSeconds,
+      messageRateLimitHours,
+      messageRateLimitCount,
+      sosCooldownSeconds,
+      sosRateLimitHours,
+      sosRateLimitCount,
+      isCODEnabled,
+      websiteOfferText
     } = req.body;
 
     let settings = await SystemSetting.findOne();
@@ -1692,6 +1849,17 @@ export const updateSettings = async (req, res) => {
     if (pushNotificationCooldownSeconds !== undefined) settings.pushNotificationCooldownSeconds = Number(pushNotificationCooldownSeconds);
     if (pushNotificationRateLimitHours !== undefined) settings.pushNotificationRateLimitHours = Number(pushNotificationRateLimitHours);
     if (pushNotificationRateLimitCount !== undefined) settings.pushNotificationRateLimitCount = Number(pushNotificationRateLimitCount);
+    if (callCooldownSeconds !== undefined) settings.callCooldownSeconds = Number(callCooldownSeconds);
+    if (callRateLimitHours !== undefined) settings.callRateLimitHours = Number(callRateLimitHours);
+    if (callRateLimitCount !== undefined) settings.callRateLimitCount = Number(callRateLimitCount);
+    if (messageCooldownSeconds !== undefined) settings.messageCooldownSeconds = Number(messageCooldownSeconds);
+    if (messageRateLimitHours !== undefined) settings.messageRateLimitHours = Number(messageRateLimitHours);
+    if (messageRateLimitCount !== undefined) settings.messageRateLimitCount = Number(messageRateLimitCount);
+    if (sosCooldownSeconds !== undefined) settings.sosCooldownSeconds = Number(sosCooldownSeconds);
+    if (sosRateLimitHours !== undefined) settings.sosRateLimitHours = Number(sosRateLimitHours);
+    if (sosRateLimitCount !== undefined) settings.sosRateLimitCount = Number(sosRateLimitCount);
+    if (isCODEnabled !== undefined) settings.isCODEnabled = Boolean(isCODEnabled);
+    if (websiteOfferText !== undefined) settings.websiteOfferText = websiteOfferText;
 
     await settings.save();
 
@@ -1732,12 +1900,45 @@ export const uploadProductImage = async (req, res) => {
   }
 };
 
+export const uploadOrderReceipt = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No receipt file uploaded' });
+    }
+    const result = await uploadToCloudinary(req.file.buffer, 'safedrive/receipts');
+    res.json({
+      success: true,
+      receiptUrl: result.secure_url
+    });
+  } catch (error) {
+    console.error('Receipt Upload Error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Receipt upload failed' });
+  }
+};
+
 export const getAdminProducts = async (req, res) => {
   try {
     const products = await Product.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 });
     res.json({ success: true, products });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const uploadQRTypeImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No image file uploaded' });
+    }
+    const result = await uploadToCloudinary(req.file.buffer, 'safedrive/qrtypes');
+    res.json({
+      success: true,
+      imageUrl: result.secure_url,
+      imagePublicId: result.public_id
+    });
+  } catch (error) {
+    console.error('QR Type Image Upload Error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Image upload failed' });
   }
 };
 
@@ -2023,7 +2224,7 @@ export const getAdminOrders = async (req, res) => {
 export const updateAdminOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { deliveryStatus, courierPartner, trackingNumber, adminNotes } = req.body;
+    const { deliveryStatus, paymentStatus, courierPartner, trackingNumber, trackingLink, shippingLabelUrl, adminNotes, assignedTagIds } = req.body;
 
     const order = await Order.findById(id);
     if (!order) {
@@ -2034,16 +2235,140 @@ export const updateAdminOrderStatus = async (req, res) => {
       order.deliveryStatus = deliveryStatus;
       if (deliveryStatus === 'DISPATCHED' || deliveryStatus === 'SHIPPED') {
         order.dispatchDate = order.dispatchDate || new Date();
+
+        // If order is dispatched, is physical, and doesn't have a tracking number yet, try to auto-generate AWB (Skip if Post Office)
+        if (!order.trackingNumber && !trackingNumber && courierPartner !== 'Post Office' && order.productType === 'PHYSICAL') {
+          try {
+            const shipData = await createForwardShipment(order);
+            if (shipData.success) {
+              order.trackingNumber = shipData.awb;
+              order.courierPartner = shipData.courier;
+              order.shippingLabelUrl = shipData.labelUrl;
+            }
+          } catch (shipErr) {
+            console.error('ShipPrime AWB Error:', shipErr.response ? shipErr.response.data : shipErr.message);
+            // Return error to frontend to let admin know why dispatch failed (e.g. invalid pincode)
+            const errorMessage = shipErr.response?.data?.message || shipErr.message;
+            return res.status(400).json({ success: false, message: `ShipPrime Error: ${errorMessage}` });
+          }
+        }
       } else if (deliveryStatus === 'DELIVERED') {
         order.deliveryDate = order.deliveryDate || new Date();
+      } else if (deliveryStatus === 'CANCELLED') {
+        // Free allocated tags but keep allocatedQRIds array for history
+        if (order.allocatedQRIds && order.allocatedQRIds.length > 0) {
+          await QRCode.updateMany(
+            { _id: { $in: order.allocatedQRIds } },
+            { $set: { status: 'IN STOCK', orderId: null, buyerId: null } }
+          );
+        }
       }
     }
-    if (courierPartner !== undefined) order.courierPartner = courierPartner.trim();
-    if (trackingNumber !== undefined) order.trackingNumber = trackingNumber.trim();
+    
+    // Only update these manually if they were provided (and not already set by ShipPrime)
+    if (courierPartner !== undefined && !order.courierPartner) order.courierPartner = courierPartner.trim();
+    if (trackingNumber !== undefined && !order.trackingNumber) order.trackingNumber = trackingNumber.trim();
+    if (trackingLink !== undefined && !order.trackingLink) order.trackingLink = trackingLink.trim();
+    if (shippingLabelUrl !== undefined && !order.shippingLabelUrl) order.shippingLabelUrl = shippingLabelUrl.trim();
     if (adminNotes !== undefined) order.adminNotes = adminNotes.trim();
+    if (paymentStatus !== undefined) order.paymentStatus = paymentStatus.trim();
+
+    // Assign tags if provided (usually during dispatch of physical orders)
+    if (assignedTagIds && Array.isArray(assignedTagIds) && assignedTagIds.length > 0) {
+      const qrs = await QRCode.find({ _id: { $in: assignedTagIds }, status: 'IN STOCK' });
+      if (qrs.length !== assignedTagIds.length) {
+        return res.status(400).json({ success: false, message: 'One or more selected tags are no longer available in stock.' });
+      }
+
+      const updatedCategories = new Set();
+
+      // Update QRCodes
+      for (const qr of qrs) {
+        qr.status = 'SOLD';
+        qr.orderId = order._id;
+        qr.buyerId = order.userId;
+        await qr.save();
+        if (qr.qrFor) updatedCategories.add(qr.qrFor);
+      }
+      
+      // Update Order
+      order.allocatedQRIds = [...new Set([...(order.allocatedQRIds || []), ...assignedTagIds])];
+
+      // LOW STOCK CHECK
+      for (const category of updatedCategories) {
+        const remainingStock = await QRCode.countDocuments({ qrFor: category, status: 'IN STOCK', isVehicle: { $ne: false } });
+        if (remainingStock <= 10) {
+          const alertTitle = `Low Stock Alert: ${category}`;
+          const alertMessage = `The physical inventory for **${category}** tags has dropped to **${remainingStock}**. Please restock soon to prevent order delays.`;
+
+          // Check if we already alerted in the last 24 hours to prevent spam
+          const recentAlert = await Notification.findOne({
+            type: 'SYSTEM',
+            title: alertTitle,
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+          });
+
+          if (!recentAlert) {
+            // Fetch all admins
+            const admins = await User.find({ role: { $in: ['ADMIN', 'SUPER_ADMIN'] } });
+            for (const admin of admins) {
+              // 1. Create DB Notification
+              await Notification.create({
+                userId: admin._id,
+                title: alertTitle,
+                message: alertMessage,
+                type: 'SYSTEM'
+              });
+
+              // 2. Send Email
+              if (admin.email) {
+                await sendSystemAlertEmail(admin.email, alertTitle, alertMessage);
+              }
+            }
+          }
+        }
+      }
+    }
 
     await order.save();
+
+    if (deliveryStatus === 'DISPATCHED' || deliveryStatus === 'SHIPPED') {
+      try {
+        if (order.customerEmail) {
+          await sendOrderDispatchEmail(order.customerEmail, order.customerName, order.orderNumber, {
+            courierName: order.courierPartner,
+            trackingNumber: order.trackingNumber,
+            trackingLink: order.trackingLink
+          });
+        }
+      } catch (emailErr) {
+        console.error('Failed to send dispatch email to user:', emailErr);
+      }
+    }
+
     res.json({ success: true, message: `Order marked as ${order.deliveryStatus}`, order });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getAvailableTagsForOrder = async (req, res) => {
+  try {
+    const { qrFor } = req.query;
+    if (!qrFor) {
+      return res.status(400).json({ success: false, message: 'qrFor parameter is required' });
+    }
+    
+    // Fetch available physical tags matching the type
+    // Removed isPrinted: true temporarily so that tags appear even if not printed
+    const tags = await QRCode.find({
+      qrFor,
+      qrType: 'PHYSICAL',
+      status: 'IN STOCK',
+      isPrinted: true
+    }).select('_id productId copyCode qrFor').limit(100);
+    
+    res.json({ success: true, tags });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -2051,20 +2376,41 @@ export const updateAdminOrderStatus = async (req, res) => {
 
 export const getAdminOrderStats = async (req, res) => {
   try {
-    const totalOrders = await Order.countDocuments();
-    const physicalOrders = await Order.countDocuments({ productType: 'PHYSICAL' });
-    const digitalOrders = await Order.countDocuments({ productType: 'DIGITAL' });
-    const pendingDispatch = await Order.countDocuments({ productType: 'PHYSICAL', deliveryStatus: 'PROCESSING' });
-    const dispatched = await Order.countDocuments({ deliveryStatus: { $in: ['DISPATCHED', 'SHIPPED'] } });
-    const delivered = await Order.countDocuments({ deliveryStatus: 'DELIVERED' });
-    const claimedQRs = await Order.countDocuments({ isClaimed: true });
+    const { type } = req.query;
+    const matchType = type && type !== 'ALL' ? { productType: type } : {};
+
+    const totalOrders = await Order.countDocuments(matchType);
+    const physicalOrders = await Order.countDocuments({ ...matchType, productType: 'PHYSICAL' });
+    const digitalOrders = await Order.countDocuments({ ...matchType, productType: 'DIGITAL' });
+    const pendingDispatch = await Order.countDocuments({ ...matchType, productType: 'PHYSICAL', deliveryStatus: 'PROCESSING' });
+    const dispatched = await Order.countDocuments({ ...matchType, deliveryStatus: { $in: ['DISPATCHED', 'SHIPPED'] } });
+    const delivered = await Order.countDocuments({ ...matchType, deliveryStatus: 'DELIVERED' });
+    const cancelled = await Order.countDocuments({ ...matchType, $or: [{ deliveryStatus: 'CANCELLED' }, { status: 'CANCELLED' }] });
+    const returned = await Order.countDocuments({ ...matchType, $or: [{ deliveryStatus: 'RETURNED' }, { status: 'RETURNED' }] });
+    const claimedQRs = await Order.countDocuments({ ...matchType, isClaimed: true });
 
     // Revenue Aggregation
     const revenueAgg = await Order.aggregate([
-      { $match: { paymentStatus: 'PAID' } },
+      { $match: { ...matchType, paymentStatus: 'PAID' } },
       { $group: { _id: null, totalRevenue: { $sum: '$amount' } } }
     ]);
     const totalRevenue = revenueAgg.length > 0 ? revenueAgg[0].totalRevenue : 0;
+
+    // Kits Aggregation
+    const kitsAgg = await Order.aggregate([
+      { $match: matchType },
+      {
+        $group: {
+          _id: null,
+          totalKits: { $sum: { $ifNull: ['$quantity', 1] } },
+          physicalKits: { $sum: { $cond: [{ $eq: ['$productType', 'PHYSICAL'] }, { $ifNull: ['$quantity', 1] }, 0] } },
+          digitalKits: { $sum: { $cond: [{ $eq: ['$productType', 'DIGITAL'] }, { $ifNull: ['$quantity', 1] }, 0] } }
+        }
+      }
+    ]);
+    const totalKits = kitsAgg.length > 0 ? kitsAgg[0].totalKits : 0;
+    const physicalKits = kitsAgg.length > 0 ? kitsAgg[0].physicalKits : 0;
+    const digitalKits = kitsAgg.length > 0 ? kitsAgg[0].digitalKits : 0;
 
     res.json({
       success: true,
@@ -2075,8 +2421,13 @@ export const getAdminOrderStats = async (req, res) => {
         pendingDispatch,
         dispatched,
         delivered,
+        cancelled,
+        returned,
         claimedQRs,
-        totalRevenue
+        totalRevenue,
+        totalKits,
+        physicalKits,
+        digitalKits
       }
     });
   } catch (error) {
@@ -2111,18 +2462,111 @@ export const getScanLogs = async (req, res) => {
 
     const total = await ScanLog.countDocuments(filter);
     const logs = await ScanLog.find(filter)
-      .populate('userId', 'name phone')
-      .populate('vehicleId', 'vehicleBrand vehicleName vehicleNumber')
+      .populate('userId', 'name phone email')
+      .populate('vehicleId', 'vehicleBrand vehicleName vehicleNumber itemName itemType')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit, 10));
+
+    // Real Global Analytics & Metrics
+    const [
+      totalAllLogs,
+      voiceCallsCount,
+      messagesCount,
+      pushAlertsCount,
+      verifiedScansCount,
+      failedAttemptsCount,
+      emergencyCount
+    ] = await Promise.all([
+      ScanLog.countDocuments(),
+      ScanLog.countDocuments({ eventType: 'CALL_INITIATED' }),
+      ScanLog.countDocuments({ eventType: { $in: ['WHATSAPP_INITIATED', 'SMS_INITIATED'] } }),
+      ScanLog.countDocuments({ eventType: 'PUSH_NOTIFICATION' }),
+      ScanLog.countDocuments({ eventType: 'PLATE_VERIFIED' }),
+      ScanLog.countDocuments({ eventType: 'PLATE_FAILED' }),
+      ScanLog.countDocuments({ eventType: 'EMERGENCY_SOS' })
+    ]);
+
+    // 7-Day Real Aggregated Trend
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const dailyTrendRaw = await ScanLog.aggregate([
+      { $match: { createdAt: { $gte: sevenDaysAgo } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 },
+          calls: { $sum: { $cond: [{ $eq: ['$eventType', 'CALL_INITIATED'] }, 1, 0] } },
+          messages: { $sum: { $cond: [{ $in: ['$eventType', ['WHATSAPP_INITIATED', 'PUSH_NOTIFICATION']] }, 1, 0] } }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Build filled 7 days array
+    const dailyTrend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const dayLabel = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      const found = dailyTrendRaw.find(item => item._id === dateStr);
+      dailyTrend.push({
+        date: dateStr,
+        label: dayLabel,
+        count: found ? found.count : 0,
+        calls: found ? found.calls : 0,
+        messages: found ? found.messages : 0
+      });
+    }
+
+    // Top Scanned Assets / Plates
+    const topAssetsRaw = await ScanLog.aggregate([
+      {
+        $match: {
+          $or: [
+            { vehicleNumber: { $exists: true, $ne: '' } },
+            { copyCode: { $exists: true, $ne: '' } },
+            { productId: { $exists: true, $ne: '' } }
+          ]
+        }
+      },
+      {
+        $group: {
+          _id: { $ifNull: ['$vehicleNumber', '$copyCode', '$productId'] },
+          count: { $sum: 1 },
+          copyCode: { $first: '$copyCode' },
+          productId: { $first: '$productId' },
+          vehicleNumber: { $first: '$vehicleNumber' }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
 
     res.json({
       success: true,
       total,
       page: parseInt(page, 10),
       pages: Math.ceil(total / limit),
-      logs
+      logs,
+      analytics: {
+        totalAllLogs,
+        voiceCallsCount,
+        messagesCount,
+        pushAlertsCount,
+        verifiedScansCount,
+        failedAttemptsCount,
+        emergencyCount,
+        dailyTrend,
+        topAssets: topAssetsRaw.map(item => ({
+          tag: item._id || item.copyCode || item.productId || 'QR Sticker',
+          count: item.count,
+          vehicleNumber: item.vehicleNumber
+        }))
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -2256,8 +2700,7 @@ export const updateAdminUser = async (req, res) => {
       name,
       email,
       phone,
-      whatsappNumber,
-      gender,
+            gender,
       address,
       city,
       state,
@@ -2288,7 +2731,6 @@ export const updateAdminUser = async (req, res) => {
     if (name) user.name = name.trim();
     if (email) user.email = email.trim().toLowerCase();
     if (phone) user.phone = phone.trim();
-    if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
     if (gender) user.gender = gender;
     if (address) user.address = address.trim();
     if (city) user.city = city.trim();
@@ -2345,8 +2787,7 @@ export const getQRUsers = async (req, res) => {
             _id: q.userId._id,
             name: q.activatedByName || q.userId.name,
             phone: q.activatedByPhone || q.userId.phone,
-            whatsappNumber: q.userId.whatsappNumber || q.activatedByPhone || q.userId.phone,
-            address: q.userId.address,
+                        address: q.userId.address,
             status: q.userId.status
           } : {
             name: q.activatedByName || 'Activated User',
@@ -2513,22 +2954,22 @@ export const getQRUserById = async (req, res) => {
 
     const kits = Object.values(kitMap);
     for (const kit of kits) {
-      if (!kit.buyer) {
-        const order = await Order.findOne({
-          $or: [
-            { claimedProductId: kit.productId },
-            { 'allocatedQRIds': { $in: kit.copies.map(c => c._id) } }
-          ]
-        }).populate('userId', 'name phone email');
+      const order = await Order.findOne({
+        $or: [
+          { claimedProductId: kit.productId },
+          { 'allocatedQRIds': { $in: kit.copies.map(c => c._id) } }
+        ]
+      }).populate('userId', 'name phone email');
 
-        if (order && order.userId) {
+      if (order) {
+        kit.orderNumber = order.orderNumber;
+        if (!kit.buyer && order.userId) {
           kit.buyer = {
             _id: order.userId._id,
             name: order.userId.name,
             phone: order.userId.phone,
             email: order.userId.email
           };
-          kit.orderNumber = order.orderNumber;
         }
       }
 
@@ -2677,3 +3118,375 @@ export const deleteContactMessage = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const cancelShipPrimeOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (order.deliveryStatus === 'RETURNED' || order.trackingNumber?.startsWith('RTN-')) {
+      // Cancel return shipment
+      await cancelReturnShipment(order.trackingNumber);
+      order.deliveryStatus = 'DELIVERED'; // Revert back to delivered
+      order.trackingNumber = order.trackingNumber.replace('RTN-', ''); // naive revert
+    } else {
+      // Cancel forward shipment
+      if (order.trackingNumber) {
+        try {
+          await cancelForwardShipment(order.trackingNumber);
+        } catch (err) {
+          console.warn('Failed to cancel ShipPrime shipment:', err.message);
+        }
+      }
+      order.deliveryStatus = 'CANCELLED';
+
+      // Free allocated tags but keep allocatedQRIds array for history
+      if (order.allocatedQRIds && order.allocatedQRIds.length > 0) {
+        await QRCode.updateMany(
+          { _id: { $in: order.allocatedQRIds } },
+          { $set: { status: 'IN STOCK', orderId: null, buyerId: null } }
+        );
+      }
+    }
+
+    await order.save();
+    res.json({ success: true, message: 'Shipment cancelled successfully', order });
+  } catch (error) {
+    console.error('Cancel Shipment Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const processOrderRefund = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { refundAmount, refundReference, refundNotes } = req.body;
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (order.deliveryStatus !== 'CANCELLED' && order.deliveryStatus !== 'RETURNED') {
+      return res.status(400).json({ success: false, message: 'Only Cancelled or Returned orders can be refunded.' });
+    }
+
+    if (order.paymentStatus !== 'PAID') {
+      return res.status(400).json({ success: false, message: 'Order was not paid.' });
+    }
+
+    order.refundStatus = 'PROCESSED';
+    order.refundAmount = refundAmount;
+    order.refundReference = refundReference;
+    order.refundNotes = refundNotes;
+    order.refundDate = new Date();
+
+    await order.save();
+
+    res.json({ success: true, message: 'Refund marked as processed', order });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const returnShipPrimeOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const returnShipment = await createReturnShipment(order);
+    
+    order.deliveryStatus = 'RETURNED';
+    order.trackingNumber = returnShipment.awb;
+    order.courierPartner = returnShipment.courier;
+
+    await order.save();
+    res.json({ success: true, message: 'Return shipment initiated successfully', order });
+  } catch (error) {
+    console.error('Return Shipment Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getAdminUserBankDetails = async (req, res) => {
+  try {
+    const bankDetails = await BankDetail.findOne({ userId: req.params.id });
+    res.json({ success: true, bankDetails });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// --- DEALER MANAGEMENT ---
+
+export const getDealers = async (req, res) => {
+  try {
+    const dealers = await User.find({ role: 'DEALER' }).select('-password').sort({ createdAt: -1 });
+    // Count how many QRs each dealer has
+    const dealersWithStats = await Promise.all(dealers.map(async (dealer) => {
+      const qrCount = await QRCode.countDocuments({ dealerId: dealer._id });
+      const activeQrCount = await QRCode.countDocuments({ dealerId: dealer._id, status: 'ACTIVE' });
+      return { ...dealer.toObject(), totalQRs: qrCount, activeQRs: activeQrCount };
+    }));
+    res.json({ success: true, dealers: dealersWithStats });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+  export const verifyDealer = async (req, res) => {
+    try {
+      const { id } = req.params;
+      const dealer = await User.findById(id);
+      
+      if (!dealer || dealer.role !== 'DEALER') {
+        return res.status(404).json({ success: false, message: 'Dealer not found' });
+      }
+
+      dealer.isVerifiedPartner = !dealer.isVerifiedPartner;
+      await dealer.save();
+
+      res.json({ 
+        success: true, 
+        message: `Partner successfully ${dealer.isVerifiedPartner ? 'verified' : 'unverified'}`, 
+        dealer 
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+export const createDealer = async (req, res) => {
+  try {
+    const { name, phone, email, address, city, state, pincode, landmark, shopName, gender } = req.body;
+    
+    let existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      if (existingUser.role === 'DEALER') {
+        return res.status(400).json({ success: false, message: 'Dealer with this phone number already exists' });
+      }
+      // If user exists but is not a dealer, promote to dealer
+      existingUser.role = 'DEALER';
+      existingUser.name = name || existingUser.name;
+      existingUser.email = email || existingUser.email;
+      existingUser.address = address || existingUser.address;
+      existingUser.city = city || existingUser.city;
+      existingUser.state = state || existingUser.state;
+      existingUser.pincode = pincode || existingUser.pincode;
+      existingUser.landmark = landmark || existingUser.landmark;
+      existingUser.shopName = shopName || existingUser.shopName;
+      existingUser.gender = gender || existingUser.gender;
+      await existingUser.save();
+      return res.status(200).json({ success: true, message: 'Existing user promoted to Dealer successfully', dealer: existingUser });
+    }
+
+    const dealer = await User.create({
+      name,
+      phone,
+      email,
+      shopName,
+      address,
+      city,
+      state,
+      pincode,
+      landmark,
+      gender,
+      role: 'DEALER',
+      userType: 'USER',
+      registeredVia: 'DIRECT_REGISTRATION'
+    });
+    
+    res.status(201).json({ success: true, message: 'Dealer created successfully', dealer });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const assignQRToDealer = async (req, res) => {
+  try {
+    const { dealerId, assignmentType, qrIds, batchIds } = req.body;
+    // assignmentType can be 'BATCHES' or 'SELECTED_QRS'
+    
+    const dealer = await User.findOne({ _id: dealerId, role: 'DEALER' });
+    if (!dealer) {
+      return res.status(404).json({ success: false, message: 'Dealer not found' });
+    }
+
+    let qrsToAssign = [];
+
+    if (assignmentType === 'BATCHES' && batchIds && batchIds.length > 0) {
+      // Find all QRs belonging to these batches
+      qrsToAssign = await QRCode.find({ batchId: { $in: batchIds } });
+    } else if (assignmentType === 'SELECTED_QRS' && qrIds && qrIds.length > 0) {
+      qrsToAssign = await QRCode.find({ _id: { $in: qrIds } });
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid assignment criteria' });
+    }
+
+    if (qrsToAssign.length === 0) {
+      return res.status(404).json({ success: false, message: 'No QR codes found for assignment' });
+    }
+
+    // Check if any of the QRs are not in a valid state for assignment
+    const invalidQRs = qrsToAssign.filter(qr => 
+      !['IN STOCK', 'GENERATED'].includes(qr.status) || qr.userId || qr.buyerId
+    );
+
+    if (invalidQRs.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot assign. ${invalidQRs.length} QR(s) are already assigned, active, sold or registered.`
+      });
+    }
+
+    // Assign all to dealer
+    const qrIdsToUpdate = qrsToAssign.map(qr => qr._id);
+    await QRCode.updateMany(
+      { _id: { $in: qrIdsToUpdate } },
+      { 
+        $set: { 
+          dealerId: dealer._id, 
+          status: 'ASSIGNED_TO_DEALER' 
+        } 
+      }
+    );
+
+    res.json({ success: true, message: `Successfully assigned ${qrIdsToUpdate.length} QR(s) to dealer.` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get QRs assigned to a specific dealer
+export const getDealerQRs = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const qrs = await QRCode.find({ dealerId: id })
+      .populate('qrTypeId', 'name')
+      .populate('qrFormatId', 'name')
+      .sort({ createdAt: -1 });
+      
+    res.json({ success: true, qrs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const unassignQRFromDealer = async (req, res) => {
+  try {
+    const { qrIds, batchNames, assignmentType } = req.body;
+    
+    let qrsToUnassign = [];
+    if (assignmentType === 'SELECTED_BATCHES') {
+      if (!batchNames || batchNames.length === 0) {
+        return res.status(400).json({ success: false, message: 'No batches provided' });
+      }
+      qrsToUnassign = await QRCode.find({ batchId: { $in: batchNames } });
+    } else {
+      if (!qrIds || qrIds.length === 0) {
+        return res.status(400).json({ success: false, message: 'No QR IDs provided' });
+      }
+      qrsToUnassign = await QRCode.find({ _id: { $in: qrIds } });
+    }
+    
+    let unassignedCount = 0;
+    
+    for (const qr of qrsToUnassign) {
+      if (qr.status === 'ASSIGNED_TO_DEALER') {
+        const nextStatus = qr.userId ? 'ACTIVE' : (qr.buyerId ? 'SOLD' : 'IN STOCK');
+        qr.status = nextStatus;
+        qr.dealerId = undefined;
+        await qr.save();
+        unassignedCount++;
+      }
+    }
+
+    res.json({ success: true, message: `Successfully unassigned ${unassignedCount} QR(s)` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+import PartnerOrder from "../models/PartnerOrder.js";
+
+export const getAllPartnerOrders = async (req, res) => {
+  try {
+    const orders = await PartnerOrder.find().sort({ createdAt: -1 });
+    res.status(200).json({ success: true, data: orders });
+  } catch (error) {
+    console.error("Error fetching partner orders:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+export const updatePartnerOrderStatus = async (req, res) => {
+  try {
+    const { orderStatus } = req.body;
+    const order = await PartnerOrder.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    order.orderStatus = orderStatus;
+    await order.save();
+    res.status(200).json({ success: true, message: "Order status updated", data: order });
+  } catch (error) {
+    console.error("Error updating partner order status:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// ==========================================
+// 15. FAQS
+// ==========================================
+
+export const getFaqs = async (req, res) => {
+  try {
+    const faqs = await FAQ.find().sort({ createdAt: -1 });
+    res.json({ success: true, faqs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch FAQs' });
+  }
+};
+
+export const createFaq = async (req, res) => {
+  try {
+    const { question, answer, isActive, order } = req.body;
+    const faq = new FAQ({ question, answer, isActive, order });
+    await faq.save();
+    res.status(201).json({ success: true, faq });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to create FAQ' });
+  }
+};
+
+export const updateFaq = async (req, res) => {
+  try {
+    const { question, answer, isActive, order } = req.body;
+    const faq = await FAQ.findByIdAndUpdate(
+      req.params.id,
+      { question, answer, isActive, order },
+      { new: true }
+    );
+    if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+    res.json({ success: true, faq });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to update FAQ' });
+  }
+};
+
+export const deleteFaq = async (req, res) => {
+  try {
+    const faq = await FAQ.findByIdAndDelete(req.params.id);
+    if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+    res.json({ success: true, message: 'FAQ deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to delete FAQ' });
+  }
+};
+

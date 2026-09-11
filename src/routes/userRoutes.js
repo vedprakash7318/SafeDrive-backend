@@ -10,7 +10,10 @@ import {
   activatePurchasedQR,
   getUserOrders,
   getUserPackages,
+  getProfile,
   updateProfile,
+  getBankDetails,
+  updateBankDetails,
   getQRDetails,
   updateUserQRDetails,
   getUserNotifications,
@@ -28,7 +31,10 @@ router.post('/fcm-token', registerFCMToken);
 router.get('/notifications', getUserNotifications);
 router.put('/notifications/:id/read', markNotificationRead);
 router.get('/packages', getUserPackages);
+router.get('/profile', getProfile);
 router.put('/profile', updateProfile);
+router.get('/bank-details', getBankDetails);
+router.post('/bank-details', updateBankDetails);
 router.post('/qr/activate', activatePurchasedQR);
 router.get('/qr/:id', getQRDetails);
 router.put('/qr/:id/details', updateUserQRDetails);

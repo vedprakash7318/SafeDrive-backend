@@ -1,23 +1,24 @@
 import mongoose from 'mongoose';
 
 const qrCodeSchema = new mongoose.Schema({
-  productId: { type: String, required: true }, // e.g. SD001
+  productId: { type: String, required: true }, // e.g. SD0001
   batchId: { type: String, required: true },
-  copyCode: { type: String, required: true, unique: true }, // e.g. SD001C1
+  copyCode: { type: String, required: true, unique: true }, // e.g. SD0001C1
   publicToken: { type: String, required: true, unique: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // The active QR user / vehicle owner
   buyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // The original customer/buyer who purchased the kit
+  dealerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // The dealer assigned to this QR
   orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
   vehicleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vehicle' },
   status: {
     type: String,
-    enum: ['GENERATED', 'IN STOCK', 'SOLD', 'REGISTERED', 'ACTIVE', 'EXPIRED', 'SUSPENDED', 'CANCELLED'],
+    enum: ['GENERATED', 'IN STOCK', 'SOLD', 'REGISTERED', 'ACTIVE', 'EXPIRED', 'SUSPENDED', 'CANCELLED', 'ASSIGNED_TO_DEALER'],
     default: 'IN STOCK'
   },
   // Vehicle vs Non-Vehicle configuration
   isVehicle: { type: Boolean, default: true },
   category: { type: String, enum: ['VEHICLE', 'NON_VEHICLE'], default: 'VEHICLE' },
-  securityCode: { type: String, trim: true }, // 4-digit unique PIN generated for Non-Vehicle tags
+  securityCode: { type: String, trim: true }, // 4-digit unique PIN (last 4 digits of Tag Product ID) for Non-Vehicle tags
 
   // Batch-configured parameters set at creation time
   qrFor: { type: String, default: 'Car' }, // Vehicle/Item type: Car, Bike, Luggage, etc.
@@ -36,6 +37,7 @@ const qrCodeSchema = new mongoose.Schema({
   activatedByName: { type: String },
   activatedByPhone: { type: String },
   activationPhone: { type: String },
+  sellingPrice: { type: Number, default: 0 },
 
   activationDate: { type: Date },
   expiryDate: { type: Date }

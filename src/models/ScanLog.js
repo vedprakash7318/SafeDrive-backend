@@ -17,7 +17,9 @@ const scanLogSchema = new mongoose.Schema({
       'CALL_INITIATED',
       'SMS_INITIATED',
       'WHATSAPP_INITIATED',
+      'MESSAGE_INITIATED',
       'PUSH_NOTIFICATION',
+      'EMERGENCY_SOS',
       'REGISTRATION_VIEW',
       'EXPIRED_VIEW',
       'SUSPENDED_VIEW'

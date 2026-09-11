@@ -13,12 +13,16 @@ import {
   subscribeNewsletter,
   submitContactInquiry,
   sendActivationOTP,
-  verifyActivationOTP
+  verifyActivationOTP,
+  getPublicSettings,
+  getPublicFaqs
 } from '../controllers/publicController.js';
 
 const router = express.Router();
 
 router.get('/landing-data', getLandingPageData);
+router.get('/settings', getPublicSettings);
+router.get('/faqs', getPublicFaqs);
 router.get('/scan-reasons', getPublicScanReasons);
 router.post('/subscribe-newsletter', subscribeNewsletter);
 router.post('/contact-inquiry', submitContactInquiry);

@@ -1,13 +1,33 @@
-import axios from 'axios';
+import admin from 'firebase-admin';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import User from '../models/User.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Initialize Firebase Admin SDK
+try {
+  if (!admin.apps.length) {
+    // Look for firebase-admin.json at the backend root
+    const serviceAccountPath = path.join(__dirname, '..', '..', 'firebase-admin.json');
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccountPath),
+    });
+    console.log('Firebase Admin SDK initialized successfully for FCM v1.');
+  }
+} catch (error) {
+  console.warn('Firebase Admin SDK failed to initialize. Push notifications may not work:', error.message);
+}
 
 /**
  * Dispatch Push Notification to all active registered devices of a user
- * Supports multi-device delivery (Phone, PC, Tablet)
+ * Supports multi-device delivery (Phone, PC, Tablet) via FCM HTTP v1 API
  */
 export const sendFCMNotificationToUser = async (userId, payload) => {
   try {
-    if (!userId) return;
+    if (!userId || !admin.apps.length) return;
+    
     const user = await User.findById(userId);
     if (!user || !user.fcmTokens || user.fcmTokens.length === 0) {
       return;
@@ -16,47 +36,56 @@ export const sendFCMNotificationToUser = async (userId, payload) => {
     const { title, body, data = {} } = payload;
     const tokens = [...new Set(user.fcmTokens.filter(t => typeof t === 'string' && t.length > 20))];
 
-    // If server key or credentials are configured in .env, dispatch via FCM REST
-    const fcmServerKey = process.env.FIREBASE_SERVER_KEY || process.env.FCM_SERVER_KEY;
+    if (tokens.length > 0) {
+      // Ensure all values in data object are strings (FCM requirement)
+      const stringifiedData = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== null && value !== undefined) {
+          stringifiedData[key] = String(value);
+        }
+      }
 
-    if (fcmServerKey && tokens.length > 0) {
-      for (const token of tokens) {
-        try {
-          await axios.post(
-            'https://fcm.googleapis.com/fcm/send',
-            {
-              to: token,
-              notification: {
-                title,
-                body,
-                icon: '/favicon.svg',
-                sound: 'default'
-              },
-              data: {
-                ...data,
-                click_action: '/dashboard',
-                sound: '/ring1.mp3'
-              },
-              priority: 'high'
-            },
-            {
-              headers: {
-                'Authorization': `key=${fcmServerKey}`,
-                'Content-Type': 'application/json'
-              },
-              timeout: 5000
+      // Add default click action to data payload
+      stringifiedData.click_action = '/dashboard';
+
+      const message = {
+        notification: {
+          title,
+          body,
+        },
+        data: stringifiedData,
+        tokens: tokens,
+      };
+
+      try {
+        const response = await admin.messaging().sendEachForMulticast(message);
+        console.log(`FCM Sent. Success: ${response.successCount}, Failed: ${response.failureCount}`);
+        
+        // Remove invalid tokens if any failures occurred
+        if (response.failureCount > 0) {
+          const failedTokens = [];
+          response.responses.forEach((resp, idx) => {
+            if (!resp.success) {
+              const errorCode = resp.error?.code;
+              console.warn(`FCM send error for token ${tokens[idx].slice(0, 10)}...:`, errorCode);
+              if (
+                errorCode === 'messaging/invalid-registration-token' ||
+                errorCode === 'messaging/registration-token-not-registered'
+              ) {
+                failedTokens.push(tokens[idx]);
+              }
             }
-          );
-        } catch (err) {
-          console.warn(`FCM send error for token ${token.slice(0, 10)}...:`, err.response?.data || err.message);
-          // If token is expired or unregistered, remove it
-          if (err.response?.status === 400 || err.response?.data?.results?.[0]?.error === 'NotRegistered') {
-            await User.updateOne({ _id: userId }, { $pull: { fcmTokens: token } });
+          });
+          if (failedTokens.length > 0) {
+            await User.updateOne({ _id: userId }, { $pull: { fcmTokens: { $in: failedTokens } } });
           }
         }
+      } catch (err) {
+        console.error('Failed to send multicast FCM message:', err);
       }
     }
   } catch (error) {
     console.error('sendFCMNotificationToUser error:', error);
   }
 };
+

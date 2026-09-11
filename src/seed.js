@@ -21,7 +21,6 @@ const seedAdminOnly = async () => {
         name: 'Super Admin',
         phone: adminPhone,
         email: adminEmail,
-        whatsappNumber: adminPhone,
         address: 'Safe Drive Corporate HQ',
         role: 'SUPER_ADMIN',
         status: 'ACTIVE',

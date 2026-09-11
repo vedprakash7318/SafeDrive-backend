@@ -14,56 +14,70 @@ import Newsletter from '../models/Newsletter.js';
 import ContactInquiry from '../models/ContactInquiry.js';
 import AuditLog from '../models/AuditLog.js';
 import Notification from '../models/Notification.js';
+import FAQ from '../models/FAQ.js';
 import { sendFCMNotificationToUser } from '../utils/fcmSender.js';
 import { initiateExotelMaskedCall } from '../utils/exotel.js';
+import { sendQRActivationEmail } from '../utils/emailService.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
+export const getPublicSettings = async (req, res) => {
+  try {
+    const settings = await SystemSetting.findOne();
+    if (!settings) {
+      return res.status(200).json({ success: true, settings: {} });
+    }
+    // Only return fields safe for public website
+    res.status(200).json({
+      success: true,
+      settings: {
+        websiteOfferText: settings.websiteOfferText,
+        supportPhone: settings.supportPhone,
+        supportEmail: settings.supportEmail
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching public settings:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+export const getPublicFaqs = async (req, res) => {
+  try {
+    const faqs = await FAQ.find({ isActive: true }).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, faqs });
+  } catch (error) {
+    console.error('Error fetching public FAQs:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 export const getPublicScanReasons = async (req, res) => {
   try {
-    let { category, isVehicle, token } = req.query;
-
-    if (token && isVehicle === undefined && !category) {
-      const qr = await QRCode.findOne({ publicToken: token }).select('isVehicle category');
-      if (qr) {
-        isVehicle = qr.isVehicle !== false ? 'true' : 'false';
-        category = qr.isVehicle !== false ? 'VEHICLE' : 'NON_VEHICLE';
+    const { token } = req.query;
+    // Find the QR code to see what QRType (qrTypeId) it is
+    let applicableTypeId = null;
+    if (token) {
+      const qr = await QRCode.findOne({ publicToken: token }).select('qrTypeId');
+      if (qr && qr.qrTypeId) {
+        applicableTypeId = qr.qrTypeId;
       }
     }
 
-    const isNonVehicle = category === 'NON_VEHICLE' || isVehicle === 'false';
-    const isVehicleCategory = category === 'VEHICLE' || isVehicle === 'true';
-
     let filter = { isActive: true, isDeleted: { $ne: true } };
 
-    if (isNonVehicle) {
+    if (applicableTypeId) {
       filter.$or = [
-        { applicableTo: { $in: ['ALL', 'NON_VEHICLE'] } },
-        { category: { $in: ['ALL', 'NON_VEHICLE'] } }
+        { applicableTo: null },
+        { applicableTo: applicableTypeId }
       ];
-    } else if (isVehicleCategory) {
-      filter.$or = [
-        { applicableTo: { $in: ['ALL', 'VEHICLE'] } },
-        { category: { $in: ['ALL', 'VEHICLE'] } },
-        { applicableTo: { $exists: false } },
-        { category: { $exists: false } }
-      ];
+    } else {
+      filter.applicableTo = null;
     }
 
-    let reasons = await ScanReason.find(filter).sort({ order: 1, createdAt: 1 });
+    const reasons = await ScanReason.find(filter).sort({ order: 1, createdAt: 1 });
 
-    // Fallback default reasons if non-vehicle specific reasons are not yet created in DB
-    if (isNonVehicle && (!reasons || reasons.length === 0 || !reasons.some(r => r.applicableTo === 'NON_VEHICLE'))) {
-      const defaultNonVeh = [
-        { _id: 'nv_1', title: 'Found / Missing Item Alert', icon: '🔍', iconKey: 'missing', color: 'indigo', isOtherType: false },
-        { _id: 'nv_2', title: 'Other Reason / Custom Note', icon: '💬', iconKey: 'other', color: 'rose', isOtherType: true }
-      ];
-      // If we have some universal reasons, combine them
-      const universal = (reasons || []).filter(r => r.applicableTo === 'ALL');
-      reasons = universal.length > 0 ? [...universal, ...defaultNonVeh.filter(d => !universal.some(u => u.title.toLowerCase() === d.title.toLowerCase()))] : defaultNonVeh;
-    }
-
-    res.json({ success: true, reasons });
+    res.json({ success: true, reasons: reasons || [] });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -115,22 +129,11 @@ export const getQRInfoByToken = async (req, res) => {
       }
     }).catch(() => {});
 
-    if (qr.status === 'SUSPENDED') {
-      return res.json({
-        success: false,
-        status: 'SUSPENDED',
-        message: 'This QR code is currently suspended by administration'
-      });
-    }
-
     // Unregistered / Physical / Digital QR -> Directly open Registration Form
     if (['GENERATED', 'IN STOCK', 'SOLD'].includes(qr.status)) {
       const isVehicleTag = qr.isVehicle !== false;
-      if (!isVehicleTag && !qr.securityCode) {
-        qr.securityCode = String(Math.floor(1000 + Math.random() * 9000));
-        await qr.save();
-        await QRCode.updateMany({ productId: qr.productId }, { securityCode: qr.securityCode });
-      }
+      const isDigital = qr.qrType === 'DIGITAL' || qr.batchId === 'STORE-DIGITAL';
+      const secCode = qr.securityCode || (qr.productId ? qr.productId.replace(/\D/g, '').padStart(4, '0').slice(-4) : null);
 
       return res.json({
         success: true,
@@ -138,31 +141,29 @@ export const getQRInfoByToken = async (req, res) => {
         productId: qr.productId,
         copyCode: qr.copyCode,
         isVehicle: isVehicleTag,
+        isDigital,
+        qrType: qr.qrType || (isDigital ? 'DIGITAL' : 'PHYSICAL'),
         category: qr.category || (!isVehicleTag ? 'NON_VEHICLE' : 'VEHICLE'),
-        qrFor: qr.qrFor || qr.qrType || 'Car',
-        securityCode: qr.securityCode || null,
+        qrFor: qr.qrFor || 'Car',
+        securityCode: secCode,
         message: 'This QR is ready for registration'
       });
     }
 
-    if (qr.status === 'ACTIVE') {
+    if (qr.status === 'ACTIVE' || qr.status === 'EXPIRED' || qr.status === 'SUSPENDED') {
       // Check for automatic expiration
-      if (qr.expiryDate && new Date(qr.expiryDate) < new Date()) {
+      let currentStatus = qr.status;
+      if (currentStatus === 'ACTIVE' && qr.expiryDate && new Date(qr.expiryDate) < new Date()) {
         qr.status = 'EXPIRED';
         await qr.save();
-        return res.json({
-          success: false,
-          status: 'EXPIRED',
-          copyCode: qr.copyCode,
-          expiryDate: qr.expiryDate,
-          message: 'This QR code has expired'
-        });
+        currentStatus = 'EXPIRED';
       }
 
       // Check user wallet quota
       const wallet = await QuotaWallet.findOne({ qrId: qr._id });
-      const canCall = wallet ? wallet.callBalance > 0 : false;
-      const canMessage = wallet ? wallet.messageBalance > 0 : false;
+      // If expired or suspended, completely disable calls and messages regardless of quota
+      const canCall = (currentStatus === 'EXPIRED' || currentStatus === 'SUSPENDED') ? false : (wallet ? wallet.callBalance > 0 : false);
+      const canMessage = (currentStatus === 'EXPIRED' || currentStatus === 'SUSPENDED') ? false : (wallet ? wallet.messageBalance > 0 : false);
 
       // Extract plate / item info
       const isVehicleTag = qr.isVehicle !== false;
@@ -175,8 +176,8 @@ export const getQRInfoByToken = async (req, res) => {
         : '••••';
 
       return res.json({
-        success: true,
-        status: 'ACTIVE',
+        success: true, // Return true so the frontend proceeds to normal flow
+        status: currentStatus,
         copyCode: qr.copyCode,
         isVehicle: isVehicleTag,
         category: qr.category || (isVehicleTag ? 'VEHICLE' : 'NON_VEHICLE'),
@@ -193,16 +194,6 @@ export const getQRInfoByToken = async (req, res) => {
       });
     }
 
-    if (qr.status === 'EXPIRED') {
-      return res.json({
-        success: false,
-        status: 'EXPIRED',
-        copyCode: qr.copyCode,
-        expiryDate: qr.expiryDate,
-        message: 'This QR code has expired'
-      });
-    }
-
     res.json({ success: false, status: qr.status, message: `QR status: ${qr.status}` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -212,32 +203,36 @@ export const getQRInfoByToken = async (req, res) => {
 export const verifyPlateLast4Digits = async (req, res) => {
   try {
     const { token } = req.params;
-    const { last4Digits, securityCode } = req.body;
+    const { last4Digits, securityCode, scannerPhone, callerPhone } = req.body;
 
     const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
 
+    const cleanScanner = (callerPhone || scannerPhone || '').trim().replace(/\D/g, '').slice(-10);
     const inputDigits = String(last4Digits || securityCode || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-
-    if (!inputDigits || inputDigits.length !== 4) {
-      return res.status(400).json({ success: false, message: 'Please provide the 4-digit code / tag PIN' });
-    }
 
     const qr = await QRCode.findOne({ publicToken: token })
       .populate('userId', 'name phone')
       .populate('vehicleId');
 
-    if (!qr || qr.status !== 'ACTIVE') {
+    if (!qr || !['ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(qr.status)) {
       return res.status(400).json({ success: false, message: 'QR is not active' });
     }
 
     const isVehicleTag = qr.isVehicle !== false;
+    const requiredLength = 4;
+
+    if (!inputDigits || inputDigits.length !== requiredLength) {
+      return res.status(400).json({ success: false, message: `Please provide the ${requiredLength}-digit code` });
+    }
+
     let isMatch = false;
 
     if (!isVehicleTag) {
-      // Non-Vehicle Tag: Match against 4-digit securityCode printed on the physical tag
-      isMatch = Boolean(qr.securityCode && inputDigits === String(qr.securityCode).toUpperCase());
+      // Non-Vehicle Tag: Match against last 4 digits of Tag ID (e.g. SD0001 -> 0001)
+      const actualLast4 = (qr.productId || '').replace(/\D/g, '').padStart(4, '0').slice(-4);
+      isMatch = (inputDigits === actualLast4);
     } else {
       // Vehicle Tag: Match against last 4 characters of vehicle number plate
       const fullPlate = (qr.vehicleId?.vehicleNumber || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
@@ -256,6 +251,8 @@ export const verifyPlateLast4Digits = async (req, res) => {
         vehicleId: qr.vehicleId?._id,
         vehicleNumber: qr.vehicleId?.vehicleNumber,
         eventType: 'PLATE_FAILED',
+        callerPhone: cleanScanner,
+        scannerPhone: cleanScanner,
         notes: `Entered: ${inputDigits}`,
         ipAddress,
         userAgent,
@@ -280,6 +277,8 @@ export const verifyPlateLast4Digits = async (req, res) => {
       vehicleId: qr.vehicleId?._id,
       vehicleNumber: qr.vehicleId?.vehicleNumber,
       eventType: 'PLATE_VERIFIED',
+      callerPhone: cleanScanner,
+      scannerPhone: cleanScanner,
       ipAddress,
       userAgent,
       device
@@ -288,6 +287,8 @@ export const verifyPlateLast4Digits = async (req, res) => {
     const wallet = await QuotaWallet.findOne({ qrId: qr._id });
     const canCall = wallet ? wallet.callBalance > 0 : false;
     const canMessage = wallet ? wallet.messageBalance > 0 : false;
+
+    const systemSettings = await SystemSetting.findOne() || {};
 
     res.json({
       success: true,
@@ -302,7 +303,13 @@ export const verifyPlateLast4Digits = async (req, res) => {
         isVehicle: isVehicleTag
       },
       canCall,
-      canMessage
+      canMessage,
+      settings: {
+        pushCooldown: systemSettings.pushNotificationCooldownSeconds || 30,
+        callCooldown: systemSettings.callCooldownSeconds || 60,
+        messageCooldown: systemSettings.messageCooldownSeconds || 30,
+        sosCooldown: systemSettings.sosCooldownSeconds || 60
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -315,15 +322,20 @@ const findEligiblePhysicalOrder = async (cleanPhone, expectedQrFor) => {
   const normExpected = (expectedQrFor || 'Car').trim().toLowerCase();
   const phonePattern = cleanPhone.length >= 8 ? cleanPhone.slice(-8) : cleanPhone;
 
-  // 1. Find all orders placed by this phone number (exact or suffix match)
+  // 1. Find all orders placed by this phone number (exact or suffix match) that are not cancelled or returned
   const allOrdersForPhone = await Order.find({
-    $or: [
-      { customerPhone: cleanPhone },
-      { customerPhone: { $regex: phonePattern } },
-      { activationPhone: cleanPhone },
-      { activationPhone: { $regex: phonePattern } },
-      { activationPhones: cleanPhone },
-      { activationPhones: { $regex: phonePattern } }
+    $and: [
+      {
+        $or: [
+          { customerPhone: cleanPhone },
+          { customerPhone: { $regex: phonePattern } },
+          { activationPhone: cleanPhone },
+          { activationPhone: { $regex: phonePattern } },
+          { activationPhones: cleanPhone },
+          { activationPhones: { $regex: phonePattern } }
+        ]
+      },
+      { deliveryStatus: { $nin: ['CANCELLED', 'RETURNED'] } }
     ]
   }).sort({ createdAt: -1 });
 
@@ -331,7 +343,7 @@ const findEligiblePhysicalOrder = async (cleanPhone, expectedQrFor) => {
     return {
       order: null,
       status: 'NOT_FOUND',
-      message: `❌ Eligible Order Not Found: Is mobile number par [${expectedQrFor}] QR Kit ka koi pending order nahi mila. Kripya apna registered purchase mobile number check karein ya website se order karein.`
+      message: `❌ Eligible Order Not Found: No pending order found for [${expectedQrFor}] QR Kit on mobile number +91 ${cleanPhone}. Please check your registered purchase mobile number or order from the website.`
     };
   }
 
@@ -344,7 +356,7 @@ const findEligiblePhysicalOrder = async (cleanPhone, expectedQrFor) => {
     return {
       order: null,
       status: 'MISMATCH_CATEGORY',
-      message: `❌ Category Mismatch: Is mobile number par [${expectedQrFor}] QR Kit ka koi pending order nahi mila. Kripya apna registered purchase mobile number check karein.`
+      message: `❌ Category Mismatch: No pending order found for [${expectedQrFor}] QR Kit on mobile number +91 ${cleanPhone}. Please check your registered purchase mobile number.`
     };
   }
 
@@ -361,7 +373,7 @@ const findEligiblePhysicalOrder = async (cleanPhone, expectedQrFor) => {
   return {
     order: null,
     status: 'ALREADY_CLAIMED',
-    message: `❌ Order Already Claimed: Is mobile number par [${expectedQrFor}] QR Kit ka order pehle hi activate kiya ja chuka hai.`
+    message: `❌ Order Already Claimed: The [${expectedQrFor}] QR Kit order for mobile number +91 ${cleanPhone} has already been activated.`
   };
 };
 
@@ -371,8 +383,7 @@ export const registerQR = async (req, res) => {
     const {
       name,
       phone,
-      whatsappNumber,
-      gender,
+            gender,
       address,
       city,
       state,
@@ -408,15 +419,13 @@ export const registerQR = async (req, res) => {
           message: 'Full Name, Phone number, and Item / Tag Title are required'
         });
       }
-      // If QR has a securityCode PIN, user must provide the exact 4-digit PIN
-      if (qr.securityCode) {
-        const inputPin = String(req.body.securityCode || '').trim();
-        if (inputPin !== String(qr.securityCode).trim()) {
-          return res.status(400).json({
-            success: false,
-            message: 'Invalid 4-digit Security Tag PIN. Please enter the 4-digit code printed on your physical tag / kit.'
-          });
-        }
+      const inputPin = String(req.body.securityCode || '').trim();
+      const actualLast4 = (qr.productId || '').replace(/\D/g, '').padStart(4, '0').slice(-4);
+      if (inputPin !== actualLast4) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid Tag ID digits. Please enter the last 4 digits of your Tag ID.'
+        });
       }
     } else {
       if (!name || !phone || !vehicleNumber || !vehicleName || !vehicleBrand) {
@@ -427,13 +436,22 @@ export const registerQR = async (req, res) => {
       }
     }
 
-    // Validate 2 emergency contacts
-    if (!emergencyContacts || !Array.isArray(emergencyContacts) || emergencyContacts.length < 2) {
+    // Validate at least 1 primary emergency contact
+    const validEmergencyContacts = Array.isArray(emergencyContacts)
+      ? emergencyContacts.filter(c => c && c.number && String(c.number).trim().replace(/\D/g, '').length >= 10)
+      : [];
+
+    if (validEmergencyContacts.length < 1) {
       return res.status(400).json({
         success: false,
-        message: 'Exactly 2 emergency contacts are required for registration'
+        message: 'At least 1 primary emergency contact is required for registration'
       });
     }
+
+    const formattedEmergencyContacts = validEmergencyContacts.map((c, idx) => ({
+      name: (c.name || `Emergency Contact ${idx + 1}`).trim(),
+      number: String(c.number).trim().replace(/\D/g, '').slice(-10)
+    }));
 
     const isDigitalQR = qr.qrType === 'DIGITAL' || qr.batchId === 'STORE-DIGITAL';
     const expectedQrFor = qr.qrFor || qr.qrType || 'Car';
@@ -461,7 +479,7 @@ export const registerQR = async (req, res) => {
       if (findRes.status !== 'MATCH' || !findRes.order) {
         return res.status(400).json({
           success: false,
-          message: findRes.message || `❌ QR Not Found: Is mobile number par koi eligible pending order nahi mila.`
+          message: findRes.message || `❌ QR Not Found: No eligible pending order found for this mobile number.`
         });
       }
 
@@ -481,8 +499,7 @@ export const registerQR = async (req, res) => {
       activationUser = await User.create({
         name,
         phone: cleanPhone,
-        whatsappNumber: whatsappNumber || cleanPhone,
-        gender: cleanGender,
+                gender: cleanGender,
         address: address || 'N/A',
         city: city || '',
         state: state || '',
@@ -496,8 +513,7 @@ export const registerQR = async (req, res) => {
     } else {
       if (name) activationUser.name = name;
       activationUser.gender = cleanGender;
-      if (whatsappNumber) activationUser.whatsappNumber = whatsappNumber;
-      if (address && address !== 'N/A') activationUser.address = address;
+            if (address && address !== 'N/A') activationUser.address = address;
       if (city) activationUser.city = city;
       if (state) activationUser.state = state;
       if (pincode) activationUser.pincode = pincode;
@@ -510,7 +526,7 @@ export const registerQR = async (req, res) => {
     if (isNonVehicle) {
       const cleanItemName = (req.body.itemName || vehicleName || `${qr.qrFor || 'Luggage'} Tag`).trim();
       const cleanItemType = (req.body.itemType || req.body.itemCategory || vehicleBrand || qr.qrFor || 'Item').trim();
-      const itemIdentifier = `${qr.productId}${qr.securityCode ? `-${qr.securityCode}` : ''}`;
+      const itemIdentifier = qr.productId;
 
       vehicle = await Vehicle.findOne({ vehicleNumber: itemIdentifier });
       if (!vehicle) {
@@ -523,10 +539,7 @@ export const registerQR = async (req, res) => {
           vehicleBrand: cleanItemType,
           vehicleModel: cleanItemType,
           vehicleNumber: itemIdentifier,
-          emergencyContacts: [
-            { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
-            { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
-          ]
+          emergencyContacts: formattedEmergencyContacts
         });
       } else {
         vehicle.isVehicle = false;
@@ -535,10 +548,7 @@ export const registerQR = async (req, res) => {
         vehicle.vehicleName = cleanItemName;
         vehicle.vehicleBrand = cleanItemType;
         vehicle.vehicleModel = cleanItemType;
-        vehicle.emergencyContacts = [
-          { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
-          { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
-        ];
+        vehicle.emergencyContacts = formattedEmergencyContacts;
         vehicle.userId = activationUser._id;
         await vehicle.save();
       }
@@ -554,20 +564,14 @@ export const registerQR = async (req, res) => {
           vehicleBrand: cleanVehicleBrand,
           vehicleModel: cleanVehicleName,
           vehicleNumber: vehicleNumber.toUpperCase().trim(),
-          emergencyContacts: [
-            { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
-            { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
-          ]
+          emergencyContacts: formattedEmergencyContacts
         });
       } else {
         vehicle.isVehicle = true;
         vehicle.vehicleName = cleanVehicleName;
         vehicle.vehicleBrand = cleanVehicleBrand;
         vehicle.vehicleModel = cleanVehicleName;
-        vehicle.emergencyContacts = [
-          { name: emergencyContacts[0].name, number: emergencyContacts[0].number },
-          { name: emergencyContacts[1].name, number: emergencyContacts[1].number }
-        ];
+        vehicle.emergencyContacts = formattedEmergencyContacts;
         vehicle.userId = activationUser._id;
       }
     }
@@ -692,6 +696,15 @@ export const registerQR = async (req, res) => {
       expiresIn: '30d'
     });
 
+    if (activationUser.email) {
+      sendQRActivationEmail(
+        activationUser.email,
+        activationUser.name,
+        vehicle.vehicleNumber || 'Item Registration',
+        qr.publicToken
+      ).catch(err => console.error('Failed to send QR activation email:', err));
+    }
+
     res.status(201).json({
       success: true,
       message: `🎉 All ${siblingQRs.length} QR stickers (${qr.productId}) activated successfully!`,
@@ -737,6 +750,45 @@ export const initiateCall = async (req, res) => {
       return res.status(400).json({ success: false, message: 'QR is not active' });
     }
 
+    let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    if (ipAddress.includes(',')) ipAddress = ipAddress.split(',')[0].trim();
+    
+    const systemSettings = await SystemSetting.findOne();
+    const cooldownSeconds = systemSettings?.callCooldownSeconds || 60;
+    const rateLimitHours = systemSettings?.callRateLimitHours || 12;
+    const rateLimitCount = systemSettings?.callRateLimitCount || 5;
+
+    const ipRegex = new RegExp(`^${ipAddress}`);
+    const identifierCondition = cleanScanner 
+      ? { $or: [{ callerPhone: cleanScanner }, { scannerPhone: cleanScanner }, { ipAddress: ipRegex }] }
+      : { ipAddress: ipRegex };
+
+    // 1. Cooldown check
+    const cooldownTime = new Date(Date.now() - cooldownSeconds * 1000);
+    const recentScan = await ScanLog.findOne({
+      qrId: qr._id,
+      eventType: 'CALL_INITIATED',
+      ...identifierCondition,
+      createdAt: { $gte: cooldownTime }
+    });
+
+    if (recentScan) {
+      return res.status(429).json({ success: false, message: `Please wait ${cooldownSeconds} seconds before initiating another call.` });
+    }
+
+    // 2. Rate limit check
+    const rateLimitTime = new Date(Date.now() - rateLimitHours * 60 * 60 * 1000);
+    const recentScanCount = await ScanLog.countDocuments({
+      qrId: qr._id,
+      eventType: 'CALL_INITIATED',
+      ...identifierCondition,
+      createdAt: { $gte: rateLimitTime }
+    });
+
+    if (recentScanCount >= rateLimitCount) {
+      return res.status(429).json({ success: false, message: `You have reached the maximum limit of ${rateLimitCount} calls per ${rateLimitHours} hours.` });
+    }
+
     // Check available wallet balance without deducting yet
     const wallet = await QuotaWallet.findOne({ qrId: qr._id });
     if (!wallet || wallet.callBalance <= 0) {
@@ -751,23 +803,20 @@ export const initiateCall = async (req, res) => {
     // Initiate Exotel Masked Call Bridge
     let exotelResponse = null;
     if (cleanScanner && targetOwnerPhone) {
-      exotelResponse = await initiateExotelMaskedCall({
-        citizenPhone: cleanScanner,
-        ownerPhone: targetOwnerPhone,
-        customField: `token:${token},vehicle:${qr.vehicleId?.vehicleNumber || qr.productId}`
-      });
+      try {
+        exotelResponse = await initiateExotelMaskedCall({
+          citizenPhone: cleanScanner,
+          ownerPhone: targetOwnerPhone,
+          customField: `token:${token},vehicle:${qr.vehicleId?.vehicleNumber || qr.productId}`
+        });
+      } catch (exErr) {
+        console.error('Exotel bridge error:', exErr.message);
+      }
     }
 
-    if (!exotelResponse || !exotelResponse.success) {
-      return res.json({
-        success: false,
-        masked: false,
-        message: exotelResponse?.message || 'Unable to initiate masked call at this moment.',
-        remainingCalls: wallet.callBalance
-      });
-    }
+    const isExotelSuccess = exotelResponse && exotelResponse.success;
 
-    // Atomic server-side quota deduction ONLY on verified successful call bridge
+    // Atomic server-side quota deduction
     const updatedWallet = await QuotaWallet.findOneAndUpdate(
       { qrId: qr._id, callBalance: { $gt: 0 } },
       { $inc: { callBalance: -1, totalCallsUsed: 1 } },
@@ -791,15 +840,13 @@ export const initiateCall = async (req, res) => {
         category: 'CALL',
         quantity: 1,
         balanceAfter: updatedWallet.callBalance,
-        reason: 'Public Scan Voice Call connected via Exotel Bridge'
+        reason: isExotelSuccess ? 'Public Scan Voice Call connected via Exotel Bridge' : 'Public Scan Voice Call initiated'
       });
     }
 
-    // Log Scan Event
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
-    ScanLog.create({
+    await ScanLog.create({
       qrId: qr._id,
       copyCode: qr.copyCode,
       productId: qr.productId,
@@ -811,19 +858,38 @@ export const initiateCall = async (req, res) => {
       callerPhone: cleanScanner,
       scannerPhone: cleanScanner,
       reason: reason || 'Voice Call Inquiry',
-      notes: `Call from ${cleanScanner ? '+91 ' + cleanScanner : 'Scanner'}: ${reason || 'Vehicle Inquiry'} (Exotel Sid: ${exotelResponse.callSid})`,
+      notes: isExotelSuccess
+        ? `Call from (+91 ${cleanScanner || 'Unknown'}) to Owner (+91 ${targetOwnerPhone}) | Reason: ${reason || 'Vehicle Inquiry'} (Exotel Sid: ${exotelResponse.callSid})`
+        : `Call from (+91 ${cleanScanner || 'Unknown'}) to Owner (+91 ${targetOwnerPhone}) | Reason: ${reason || 'Vehicle Inquiry'}`,
       ipAddress,
       userAgent,
       device
-    }).catch(() => {});
+    });
+
+    // Create In-App Notification for Owner
+    if (qr.userId?._id) {
+      const tagLabel = qr.vehicleId?.vehicleNumber || qr.vehicleId?.itemName || qr.productId || 'Tag';
+      await Notification.create({
+        userId: qr.userId._id,
+        title: `📞 Incoming Call Alert: ${tagLabel}`,
+        message: `Voice call initiated for: ${reason || 'Inquiry'}`,
+        type: 'CALL_ALERT',
+        qrId: qr._id,
+        vehicleNumber: qr.vehicleId?.vehicleNumber,
+        metadata: { reason, token, callSid: exotelResponse?.callSid }
+      });
+    }
 
     res.json({
       success: true,
-      masked: true,
+      masked: isExotelSuccess,
       callSid: exotelResponse?.callSid,
-      provider: 'EXOTEL',
-      message: '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.',
+      provider: isExotelSuccess ? 'EXOTEL' : 'DIRECT',
+      message: isExotelSuccess
+        ? '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.'
+        : '📞 Call connection initiated.',
       targetPhone: targetOwnerPhone,
+      cooldownSeconds: cooldownSeconds,
       remainingCalls: updatedWallet ? updatedWallet.callBalance : wallet.callBalance
     });
   } catch (error) {
@@ -836,11 +902,51 @@ export const initiateMessage = async (req, res) => {
     const { token } = req.params;
     const { messageText, callerPhone, scannerPhone, reason } = req.body;
     const cleanScanner = (callerPhone || scannerPhone || '').trim().replace(/\D/g, '').slice(-10);
+    const cleanMsgText = (messageText || reason || 'Message Alert').trim();
 
     const qr = await QRCode.findOne({ publicToken: token }).populate('userId').populate('vehicleId');
 
     if (!qr || qr.status !== 'ACTIVE') {
       return res.status(400).json({ success: false, message: 'QR is not active' });
+    }
+
+    let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    if (ipAddress.includes(',')) ipAddress = ipAddress.split(',')[0].trim();
+    
+    const systemSettings = await SystemSetting.findOne();
+    const cooldownSeconds = systemSettings?.messageCooldownSeconds || 30;
+    const rateLimitHours = systemSettings?.messageRateLimitHours || 12;
+    const rateLimitCount = systemSettings?.messageRateLimitCount || 10;
+
+    const ipRegex = new RegExp(`^${ipAddress}`);
+    const identifierCondition = cleanScanner 
+      ? { $or: [{ callerPhone: cleanScanner }, { scannerPhone: cleanScanner }, { ipAddress: ipRegex }] }
+      : { ipAddress: ipRegex };
+
+    // 1. Cooldown check
+    const cooldownTime = new Date(Date.now() - cooldownSeconds * 1000);
+    const recentScan = await ScanLog.findOne({
+      qrId: qr._id,
+      eventType: 'WHATSAPP_INITIATED',
+      ...identifierCondition,
+      createdAt: { $gte: cooldownTime }
+    });
+
+    if (recentScan) {
+      return res.status(429).json({ success: false, message: `Please wait ${cooldownSeconds} seconds before sending another message.` });
+    }
+
+    // 2. Rate limit check
+    const rateLimitTime = new Date(Date.now() - rateLimitHours * 60 * 60 * 1000);
+    const recentScanCount = await ScanLog.countDocuments({
+      qrId: qr._id,
+      eventType: 'WHATSAPP_INITIATED',
+      ...identifierCondition,
+      createdAt: { $gte: rateLimitTime }
+    });
+
+    if (recentScanCount >= rateLimitCount) {
+      return res.status(429).json({ success: false, message: `You have reached the maximum limit of ${rateLimitCount} messages per ${rateLimitHours} hours.` });
     }
 
     // Atomic server-side quota deduction
@@ -877,12 +983,11 @@ export const initiateMessage = async (req, res) => {
     });
 
     // Log Scan Event
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
-    const cleanMsgText = (messageText || reason || 'WhatsApp Alert').trim();
+    const targetOwnerPhone = qr.userId?.phone || '';
 
-    ScanLog.create({
+    await ScanLog.create({
       qrId: qr._id,
       copyCode: qr.copyCode,
       productId: qr.productId,
@@ -895,20 +1000,30 @@ export const initiateMessage = async (req, res) => {
       scannerPhone: cleanScanner,
       reason: cleanMsgText,
       message: cleanMsgText,
-      notes: cleanMsgText,
+      notes: `Message from (+91 ${cleanScanner || 'Unknown'}) to Owner (+91 ${targetOwnerPhone}) | Reason: ${cleanMsgText}`,
       ipAddress,
       userAgent,
       device
-    }).catch(() => {});
+    });
 
-    const targetPhone = qr.userId?.whatsappNumber || qr.userId?.phone || '';
-    const defaultMsg = encodeURIComponent(cleanMsgText);
-    const whatsappUrl = `https://wa.me/91${targetPhone.replace(/\D/g, '').slice(-10)}?text=${defaultMsg}`;
+    // Create In-App Notification for Owner
+    if (qr.userId?._id) {
+      const tagLabel = qr.vehicleId?.vehicleNumber || qr.vehicleId?.itemName || qr.productId || 'Tag';
+      await Notification.create({
+        userId: qr.userId._id,
+        title: `💬 Message Alert: ${tagLabel}`,
+        message: `Message sent: ${cleanMsgText}`,
+        type: 'MESSAGE_ALERT',
+        qrId: qr._id,
+        vehicleNumber: qr.vehicleId?.vehicleNumber,
+        metadata: { reason: cleanMsgText, messageText: cleanMsgText, token }
+      });
+    }
 
     res.json({
       success: true,
-      message: 'Message quota deducted. Notification initiated.',
-      whatsappUrl,
+      message: 'Message notification sent directly to owner.',
+      cooldownSeconds: cooldownSeconds,
       remainingMessages: wallet.messageBalance
     });
   } catch (error) {
@@ -973,6 +1088,8 @@ export const sendPushNotification = async (req, res) => {
       return res.status(429).json({ success: false, message: `You have reached the maximum limit of ${rateLimitCount} push notifications per ${rateLimitHours} hours for this vehicle.` });
     }
 
+    const targetOwnerPhone = qr.userId?.phone || '';
+
     // 3. Create Scan Log
     await ScanLog.create({
       qrId: qr._id,
@@ -987,7 +1104,7 @@ export const sendPushNotification = async (req, res) => {
       scannerPhone: cleanScanner,
       reason: reason || 'In-App Push Alert',
       message: messageText,
-      notes: `Push Alert by ${cleanScanner ? '+91 ' + cleanScanner : 'Public Scanner'}: ${messageText || reason}`,
+      notes: `Push Alert from (+91 ${cleanScanner || 'Unknown'}) to Owner (+91 ${targetOwnerPhone}) | Reason: ${messageText || reason || 'Vehicle Alert'}`,
       ipAddress,
       userAgent,
       device
@@ -995,22 +1112,36 @@ export const sendPushNotification = async (req, res) => {
 
     // 2. Create In-App & Push Notification
     const cleanAlertMessage = messageText || reason || 'Vehicle Alert';
+    const tagName = qr.vehicleId?.vehicleNumber || qr.vehicleId?.itemName || qr.vehicleId?.vehicleName || qr.qrFor || 'Vehicle/Item';
+
     if (qr.userId?._id) {
       await Notification.create({
         userId: qr.userId._id,
-        title: `🔔 Push Alert: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
+        title: `🔔 Alert for: ${tagName}`,
         message: cleanAlertMessage,
         type: 'MESSAGE_ALERT',
         qrId: qr._id,
         vehicleNumber: qr.vehicleId?.vehicleNumber,
-        scannerPhone: cleanScanner,
-        metadata: { reason, messageText: cleanAlertMessage, token }
+        metadata: { 
+          reason, 
+          messageText: cleanAlertMessage, 
+          token,
+          qrType: qr.qrFor || 'Vehicle',
+          tagName: tagName
+        }
       });
 
       sendFCMNotificationToUser(qr.userId._id, {
-        title: `🔔 Push Alert: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
+        title: `🔔 Alert for: ${tagName}`,
         body: cleanAlertMessage,
-        data: { reason, messageText: cleanAlertMessage, token, type: 'PUSH_NOTIFICATION' }
+        data: { 
+          reason, 
+          messageText: cleanAlertMessage, 
+          token, 
+          type: 'PUSH_NOTIFICATION',
+          qrType: qr.qrFor || 'Vehicle',
+          tagName: tagName
+        }
       }).catch(() => {});
     }
 
@@ -1038,6 +1169,43 @@ export const triggerEmergency = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Invalid QR' });
     }
 
+    let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    if (ipAddress.includes(',')) ipAddress = ipAddress.split(',')[0].trim();
+    
+    const systemSettings = await SystemSetting.findOne();
+    const cooldownSeconds = systemSettings?.sosCooldownSeconds || 60;
+    const rateLimitHours = systemSettings?.sosRateLimitHours || 12;
+    const rateLimitCount = systemSettings?.sosRateLimitCount || 3;
+
+    const ipRegex = new RegExp(`^${ipAddress}`);
+    const identifierCondition = cleanScanner 
+      ? { $or: [{ callerPhone: cleanScanner }, { scannerPhone: cleanScanner }, { ipAddress: ipRegex }] }
+      : { ipAddress: ipRegex };
+
+    // 1. Cooldown check
+    const cooldownTime = new Date(Date.now() - cooldownSeconds * 1000);
+    const recentSos = await EmergencyAlert.findOne({
+      qrId: qr._id,
+      ...identifierCondition,
+      createdAt: { $gte: cooldownTime }
+    });
+
+    if (recentSos) {
+      return res.status(429).json({ success: false, message: `Please wait ${cooldownSeconds} seconds before initiating another SOS.` });
+    }
+
+    // 2. Rate limit check
+    const rateLimitTime = new Date(Date.now() - rateLimitHours * 60 * 60 * 1000);
+    const recentSosCount = await EmergencyAlert.countDocuments({
+      qrId: qr._id,
+      ...identifierCondition,
+      createdAt: { $gte: rateLimitTime }
+    });
+
+    if (recentSosCount >= rateLimitCount) {
+      return res.status(429).json({ success: false, message: `SOS limit of ${rateLimitCount} reached for the last ${rateLimitHours} hours.` });
+    }
+
     const contacts = qr.vehicleId?.emergencyContacts || [];
     const generatedMapsLink = mapsLink || (latitude && longitude ? `https://maps.google.com/?q=${latitude},${longitude}` : null);
 
@@ -1052,6 +1220,7 @@ export const triggerEmergency = async (req, res) => {
       scannerPhone: cleanScanner,
       ip: req.ip || 'Unknown',
       device: req.headers['user-agent'] || 'Mobile Device',
+      reason: reason || 'Emergency Alert',
       location: {
         latitude: latitude || null,
         longitude: longitude || null,
@@ -1061,7 +1230,6 @@ export const triggerEmergency = async (req, res) => {
     });
 
     // Log Scan Event
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const device = /mobile/i.test(userAgent) ? 'Mobile' : 'Desktop';
     ScanLog.create({
@@ -1072,7 +1240,7 @@ export const triggerEmergency = async (req, res) => {
       userId: qr.userId?._id,
       vehicleId: qr.vehicleId?._id,
       vehicleNumber: qr.vehicleId?.vehicleNumber,
-      eventType: 'SCAN_VIEW',
+      eventType: 'EMERGENCY_SOS',
       callerPhone: cleanScanner,
       scannerPhone: cleanScanner,
       reason: reason || 'Emergency SOS Triggered',
@@ -1083,26 +1251,38 @@ export const triggerEmergency = async (req, res) => {
     }).catch(() => {});
 
     // Create In-App & Push Notification
+    const tagName = qr.vehicleId?.vehicleNumber || qr.vehicleId?.itemName || qr.vehicleId?.vehicleName || qr.qrFor || 'Vehicle/Item';
+
     if (qr.userId?._id) {
       Notification.create({
         userId: qr.userId._id,
-        title: `🚨 SOS EMERGENCY ALERT: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
-        message: cleanScanner
-          ? `Emergency SOS triggered by (+91 ${cleanScanner}). GPS Location dispatched to emergency contacts.`
-          : `Emergency SOS triggered. GPS Location dispatched to emergency contacts.`,
+        title: `🚨 SOS EMERGENCY: ${tagName}`,
+        message: `Emergency SOS triggered. GPS Location dispatched to emergency contacts.`,
         type: 'EMERGENCY_ALERT',
         qrId: qr._id,
         vehicleNumber: qr.vehicleId?.vehicleNumber,
-        scannerPhone: cleanScanner,
-        metadata: { latitude, longitude, mapsLink: generatedMapsLink, token }
+        metadata: { 
+          latitude, 
+          longitude, 
+          mapsLink: generatedMapsLink, 
+          token,
+          qrType: qr.qrFor || 'Vehicle',
+          tagName: tagName
+        }
       }).catch(() => {});
 
       sendFCMNotificationToUser(qr.userId._id, {
-        title: `🚨 SOS EMERGENCY ALERT: ${qr.vehicleId?.vehicleNumber || 'Vehicle'}`,
-        body: cleanScanner
-          ? `Emergency SOS triggered by (+91 ${cleanScanner}). GPS Location dispatched to emergency contacts.`
-          : `Emergency SOS triggered. GPS Location dispatched to emergency contacts.`,
-        data: { latitude: String(latitude || ''), longitude: String(longitude || ''), mapsLink: generatedMapsLink || '', token, type: 'EMERGENCY_ALERT' }
+        title: `🚨 SOS EMERGENCY: ${tagName}`,
+        body: `Emergency SOS triggered. GPS Location dispatched to emergency contacts.`,
+        data: { 
+          latitude: String(latitude || ''), 
+          longitude: String(longitude || ''), 
+          mapsLink: generatedMapsLink || '', 
+          token, 
+          type: 'EMERGENCY_ALERT',
+          qrType: qr.qrFor || 'Vehicle',
+          tagName: tagName
+        }
       }).catch(() => {});
     }
 
@@ -1252,8 +1432,8 @@ export const sendActivationOTP = async (req, res) => {
       }
     }
 
-    // Check if user exists in database
-    const existingUser = await User.findOne({
+    // Check if user exists in database or matching order
+    let existingUser = await User.findOne({
       $or: [
         { phone: cleanPhone },
         { phone: `+91${cleanPhone}` },
@@ -1268,19 +1448,41 @@ export const sendActivationOTP = async (req, res) => {
       });
     }
 
+    const phonePattern = cleanPhone.length >= 8 ? cleanPhone.slice(-8) : cleanPhone;
+    const matchingOrder = await Order.findOne({
+      $or: [
+        { customerPhone: cleanPhone },
+        { customerPhone: { $regex: phonePattern } },
+        { activationPhone: cleanPhone },
+        { activationPhone: { $regex: phonePattern } },
+        { activationPhones: cleanPhone },
+        { activationPhones: { $regex: phonePattern } }
+      ]
+    }).sort({ createdAt: -1 });
+
+    const resolvedName = existingUser?.name || matchingOrder?.customerName || '';
+    const rawGender = existingUser?.gender || matchingOrder?.customerGender || matchingOrder?.gender || 'Male';
+    let formattedGender = 'Male';
+    if (rawGender) {
+      const lower = rawGender.toString().toLowerCase();
+      if (lower.startsWith('fem')) formattedGender = 'Female';
+      else if (lower.startsWith('oth')) formattedGender = 'Other';
+      else formattedGender = 'Male';
+    }
+
     res.json({
       success: true,
       message: `OTP sent to mobile +91 ${cleanPhone}`,
       phone: cleanPhone,
       otp: '123456',
-      userExists: !!existingUser,
-      user: existingUser ? {
-        name: existingUser.name,
-        phone: existingUser.phone,
-        email: existingUser.email,
-        whatsappNumber: existingUser.whatsappNumber,
-        address: existingUser.address
-      } : null
+      userExists: !!existingUser || !!matchingOrder,
+      user: {
+        name: resolvedName,
+        gender: formattedGender,
+        phone: cleanPhone,
+        email: existingUser?.email || matchingOrder?.customerEmail || '',
+                address: existingUser?.address || matchingOrder?.deliveryAddress || ''
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -1305,6 +1507,7 @@ export const verifyActivationOTP = async (req, res) => {
     }
 
     // If QR token is passed, validate whether this phone is eligible for this QR sticker
+    let matchingOrder = null;
     if (token) {
       const qr = await QRCode.findOne({ publicToken: token });
       if (qr && ['GENERATED', 'IN STOCK', 'SOLD'].includes(qr.status)) {
@@ -1319,6 +1522,7 @@ export const verifyActivationOTP = async (req, res) => {
               message: findRes.message || `❌ No pending physical order found for [${expectedCategory}] on activation mobile number +91 ${cleanPhone}.`
             });
           }
+          matchingOrder = findRes.order;
         }
       }
     }
@@ -1331,18 +1535,42 @@ export const verifyActivationOTP = async (req, res) => {
       ]
     });
 
+    if (!matchingOrder) {
+      const phonePattern = cleanPhone.length >= 8 ? cleanPhone.slice(-8) : cleanPhone;
+      matchingOrder = await Order.findOne({
+        $or: [
+          { customerPhone: cleanPhone },
+          { customerPhone: { $regex: phonePattern } },
+          { activationPhone: cleanPhone },
+          { activationPhone: { $regex: phonePattern } },
+          { activationPhones: cleanPhone },
+          { activationPhones: { $regex: phonePattern } }
+        ]
+      }).sort({ createdAt: -1 });
+    }
+
+    const resolvedName = existingUser?.name || matchingOrder?.customerName || '';
+    const rawGender = existingUser?.gender || matchingOrder?.customerGender || matchingOrder?.gender || 'Male';
+    let formattedGender = 'Male';
+    if (rawGender) {
+      const lower = rawGender.toString().toLowerCase();
+      if (lower.startsWith('fem')) formattedGender = 'Female';
+      else if (lower.startsWith('oth')) formattedGender = 'Other';
+      else formattedGender = 'Male';
+    }
+
     res.json({
       success: true,
       verified: true,
       phone: cleanPhone,
-      userExists: !!existingUser,
-      user: existingUser ? {
-        name: existingUser.name,
-        phone: existingUser.phone,
-        email: existingUser.email,
-        whatsappNumber: existingUser.whatsappNumber,
-        address: existingUser.address
-      } : null
+      userExists: !!existingUser || !!matchingOrder,
+      user: {
+        name: resolvedName,
+        gender: formattedGender,
+        phone: cleanPhone,
+        email: existingUser?.email || matchingOrder?.customerEmail || '',
+                address: existingUser?.address || matchingOrder?.deliveryAddress || ''
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -1385,10 +1613,13 @@ export const getLandingPageData = async (req, res) => {
         support: '24/7'
       },
       company: {
-        supportEmail: settingsMap.supportEmail || 'support@safedrivetag.in',
-        supportPhone: settingsMap.supportPhone || '+91 98765 43210',
-        address: settingsMap.officeAddress || 'Lucknow, Uttar Pradesh, India',
+        supportEmail: systemSettings[0]?.supportEmail || 'support@safedrivetag.in',
+        supportPhone: systemSettings[0]?.supportPhone || '+91 98765 43210',
+        address: 'Lucknow, Uttar Pradesh, India',
         companyName: 'SafeDrive-Tag'
+      },
+      features: {
+        isCODEnabled: systemSettings[0]?.isCODEnabled !== false
       }
     });
   } catch (error) {

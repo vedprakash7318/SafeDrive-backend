@@ -30,6 +30,7 @@ const productSchema = new mongoose.Schema({
   soldCount: { type: Number, default: 0 },
   totalRevenue: { type: Number, default: 0 },
   isActive: { type: Boolean, default: true },
+  inStock: { type: Boolean, default: true },
   isDeleted: { type: Boolean, default: false },
   deletedAt: { type: Date }
 }, { timestamps: true });

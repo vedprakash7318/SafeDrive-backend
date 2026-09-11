@@ -9,7 +9,6 @@ import {
   toggleBatchPrintStatus,
   updateQRBatch,
   deleteQRBatch,
-  getQRs,
   getQRById,
   updateQRStatus,
   updateAdminQRDetails,
@@ -21,6 +20,8 @@ import {
   updateAdminProduct,
   deleteAdminProduct,
   uploadProductImage,
+  uploadQRTypeImage,
+  uploadOrderReceipt,
   getUsers,
   getUserById,
   getQRUsers,
@@ -61,11 +62,37 @@ import {
   restoreScanReason,
   getAdminOrders,
   updateAdminOrderStatus,
+  cancelShipPrimeOrder,
+  returnShipPrimeOrder,
   getAdminOrderStats,
+  processOrderRefund,
+  getAdminUserBankDetails,
+  getAvailableTagsForOrder,
   getContactMessages,
   markContactMessageRead,
-  deleteContactMessage
+  deleteContactMessage,
+  getDealers,
+  createDealer,
+  verifyDealer,
+  assignQRToDealer,
+  unassignQRFromDealer,
+  getDealerQRs,
+  getFaqs,
+  createFaq,
+  updateFaq,
+  deleteFaq
 } from '../controllers/adminController.js';
+import {
+  createPartnerProduct,
+  getPartnerProducts,
+  updatePartnerProduct,
+  deletePartnerProduct,
+  getPartnerOrders,
+  getAvailablePartnerTags,
+  updatePartnerOrderStatus,
+  cancelShipPrimePartnerOrder,
+  returnShipPrimePartnerOrder
+} from '../controllers/partnerAdminController.js';
 import { protect, adminOnly } from '../middlewares/authMiddleware.js';
 
 const upload = multer({
@@ -87,8 +114,6 @@ router.get('/qr/group/:groupName', getQRsByGroup);
 router.put('/qr/batch/:batchId', updateQRBatch);
 router.delete('/qr/batch/:batchId', deleteQRBatch);
 router.put('/qr/batch/:batchId/print-status', toggleBatchPrintStatus);
-router.get('/qr', getQRs);
-router.get('/qr/list', getQRs);
 router.get('/qr/:id', getQRById);
 router.put('/qr/:id/status', updateQRStatus);
 router.put('/qr/:id/details', updateAdminQRDetails);
@@ -117,6 +142,7 @@ router.delete('/tags/:id', deleteTag);
 router.put('/tags/:id/restore', restoreTag);
 
 router.get('/qr-types', getQRTypes);
+router.post('/qr-types/upload-image', upload.single('image'), uploadQRTypeImage);
 router.post('/qr-types', createQRType);
 router.put('/qr-types/:id', updateQRType);
 router.delete('/qr-types/:id', deleteQRType);
@@ -141,11 +167,17 @@ router.delete('/scan-reasons/:id', deleteScanReason);
 router.put('/scan-reasons/:id/restore', restoreScanReason);
 
 router.get('/orders/stats', getAdminOrderStats);
+router.get('/orders/available-tags', getAvailableTagsForOrder);
 router.get('/orders', getAdminOrders);
+router.post('/orders/upload-receipt', upload.single('file'), uploadOrderReceipt);
 router.patch('/orders/:id/status', updateAdminOrderStatus);
+router.post('/orders/:id/refund', processOrderRefund);
+router.post('/orders/:id/shipprime-cancel', cancelShipPrimeOrder);
+router.post('/orders/:id/shipprime-return', returnShipPrimeOrder);
 
 router.get('/users', getUsers);
 router.get('/users/:id', getUserById);
+router.get('/users/:id/bank-details', getAdminUserBankDetails);
 router.put('/users/:id', updateAdminUser);
 router.put('/users/:id/status', updateUserStatus);
 
@@ -169,5 +201,30 @@ router.put('/settings', updateSettings);
 router.get('/contact-messages', getContactMessages);
 router.put('/contact-messages/:id/read', markContactMessageRead);
 router.delete('/contact-messages/:id', deleteContactMessage);
+
+router.get('/dealers', getDealers);
+router.get('/dealers/:id/qrs', getDealerQRs);
+router.post('/dealers', createDealer);
+router.patch('/dealers/:id/verify', verifyDealer);
+router.post('/dealers/assign-qr', assignQRToDealer);
+router.post('/dealers/unassign-qr', unassignQRFromDealer);
+
+// Partner Bulk Ordering (Admin Side)
+router.get('/partner-products', getPartnerProducts);
+router.post('/partner-products', createPartnerProduct);
+router.put('/partner-products/:id', updatePartnerProduct);
+router.delete('/partner-products/:id', deletePartnerProduct);
+
+router.get('/partner-orders', getPartnerOrders);
+router.get('/partner-orders/available-tags', getAvailablePartnerTags);
+router.put('/partner-orders/:id/status', updatePartnerOrderStatus);
+router.post('/partner-orders/:id/shipprime-cancel', cancelShipPrimePartnerOrder);
+router.post('/partner-orders/:id/shipprime-return', returnShipPrimePartnerOrder);
+
+// FAQs
+router.get('/faqs', getFaqs);
+router.post('/faqs', createFaq);
+router.put('/faqs/:id', updateFaq);
+router.delete('/faqs/:id', deleteFaq);
 
 export default router;

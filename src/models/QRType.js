@@ -6,6 +6,7 @@ const qrTypeSchema = new mongoose.Schema({
   isVehicle: { type: Boolean, default: true },
   code: { type: String, trim: true },
   description: { type: String, default: '' },
+  templateImage: { type: String, default: null },
   material: { type: String, default: 'Reflective Weatherproof Sticker' },
   copiesPerSet: { type: Number, default: 2, min: 1, max: 20 },
   price: { type: Number, default: 299 },

@@ -1,0 +1,3280 @@
+{
+  "collection": {
+    "info": {
+      "name": "SafeDrive Complete API Collection by me",
+      "description": "Auto-generated collection of all SafeDrive APIs.",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+      {
+        "name": "Admin APIs",
+        "item": [
+          {
+            "name": "GET /stats",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/stats",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "stats"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /dashboard",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/dashboard",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "dashboard"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/generate",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/generate",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "generate"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/next-number",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/next-number",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "next-number"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/groups",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/groups",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "groups"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/batches",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/batches",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "batches"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/group/:groupName",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/group/{{groupName}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "group",
+                  "{{groupName}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr/batch/:batchId",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/batch/{{batchId}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "batch",
+                  "{{batchId}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /qr/batch/:batchId",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/batch/{{batchId}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "batch",
+                  "{{batchId}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr/batch/:batchId/print-status",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/batch/{{batchId}}/print-status",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "batch",
+                  "{{batchId}}",
+                  "print-status"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/list",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/list",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "list"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/:id",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr/:id/status",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/{{id}}/status",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "{{id}}",
+                  "status"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr/:id/details",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/{{id}}/details",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "{{id}}",
+                  "details"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:id/renew",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr/{{id}}/renew",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr",
+                  "{{id}}",
+                  "renew"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /add-quota",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/add-quota",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "add-quota"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /audit-logs",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/audit-logs",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "audit-logs"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /products",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/products",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "products"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /products/:id",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/products/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "products",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /products/upload-image",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/products/upload-image",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "products",
+                  "upload-image"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /products",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/products",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "products"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /products/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/products/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "products",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /products/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/products/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "products",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /tags",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/tags",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "tags"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /tags",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/tags",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "tags"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /tags/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/tags/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "tags",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /tags/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/tags/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "tags",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /tags/:id/restore",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/tags/{{id}}/restore",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "tags",
+                  "{{id}}",
+                  "restore"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr-types",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-types",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-types"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr-types/upload-image",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-types/upload-image",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-types",
+                  "upload-image"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr-types",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-types",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-types"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr-types/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-types/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-types",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /qr-types/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-types/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-types",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr-types/:id/restore",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-types/{{id}}/restore",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-types",
+                  "{{id}}",
+                  "restore"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr-fors",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-fors",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-fors"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr-fors",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-fors",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-fors"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr-fors/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-fors/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-fors",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /qr-fors/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-fors/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-fors",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr-fors/:id/restore",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-fors/{{id}}/restore",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-fors",
+                  "{{id}}",
+                  "restore"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr-formats",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-formats",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-formats"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr-formats",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-formats",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-formats"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr-formats/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-formats/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-formats",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /qr-formats/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-formats/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-formats",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr-formats/:id/restore",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-formats/{{id}}/restore",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-formats",
+                  "{{id}}",
+                  "restore"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /scan-reasons",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/scan-reasons",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "scan-reasons"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /scan-reasons",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/scan-reasons",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "scan-reasons"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /scan-reasons/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/scan-reasons/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "scan-reasons",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /scan-reasons/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/scan-reasons/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "scan-reasons",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /scan-reasons/:id/restore",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/scan-reasons/{{id}}/restore",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "scan-reasons",
+                  "{{id}}",
+                  "restore"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /orders/stats",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders/stats",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders",
+                  "stats"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /orders/available-tags",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders/available-tags",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders",
+                  "available-tags"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /orders",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PATCH /orders/:id/status",
+            "request": {
+              "method": "PATCH",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders/{{id}}/status",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders",
+                  "{{id}}",
+                  "status"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /orders/:id/refund",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders/{{id}}/refund",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders",
+                  "{{id}}",
+                  "refund"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /orders/:id/shipprime-cancel",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders/{{id}}/shipprime-cancel",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders",
+                  "{{id}}",
+                  "shipprime-cancel"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /orders/:id/shipprime-return",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/orders/{{id}}/shipprime-return",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "orders",
+                  "{{id}}",
+                  "shipprime-return"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /users",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/users",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "users"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /users/:id",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/users/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "users",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /users/:id/bank-details",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/users/{{id}}/bank-details",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "users",
+                  "{{id}}",
+                  "bank-details"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /users/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/users/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "users",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /users/:id/status",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/users/{{id}}/status",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "users",
+                  "{{id}}",
+                  "status"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr-users",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-users",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-users"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr-users/:id",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/qr-users/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "qr-users",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /vehicles",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/vehicles",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "vehicles"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /vehicles/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/vehicles/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "vehicles",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /emergency-alerts",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/emergency-alerts",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "emergency-alerts"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /scan-logs",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/scan-logs",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "scan-logs"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /packages",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/packages",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "packages"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /packages",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/packages",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "packages"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /packages/:id",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/packages/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "packages",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /packages/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/packages/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "packages",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /packages/:id/restore",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/packages/{{id}}/restore",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "packages",
+                  "{{id}}",
+                  "restore"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /settings",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/settings",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "settings"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /settings",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/settings",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "settings"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /contact-messages",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/contact-messages",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "contact-messages"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /contact-messages/:id/read",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/contact-messages/{{id}}/read",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "contact-messages",
+                  "{{id}}",
+                  "read"
+                ]
+              }
+            }
+          },
+          {
+            "name": "DELETE /contact-messages/:id",
+            "request": {
+              "method": "DELETE",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/contact-messages/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "contact-messages",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /dealers",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/dealers",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "dealers"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /dealers/:id/qrs",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/dealers/{{id}}/qrs",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "dealers",
+                  "{{id}}",
+                  "qrs"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /dealers",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/dealers",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "dealers"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /dealers/assign-qr",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/dealers/assign-qr",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "dealers",
+                  "assign-qr"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /dealers/unassign-qr",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/admin/dealers/unassign-qr",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "admin",
+                  "dealers",
+                  "unassign-qr"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "Auth APIs",
+        "item": [
+          {
+            "name": "POST /register",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/register",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "register"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /create-admin",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/create-admin",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "create-admin"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /login",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/login",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "login"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /send-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/send-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "send-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /verify-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/verify-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "verify-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /send-login-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/send-login-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "send-login-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /verify-login-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/verify-login-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "verify-login-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /me",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/auth/me",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "auth",
+                  "me"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "Dealer APIs",
+        "item": [
+          {
+            "name": "POST /login",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/dealer/login",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "dealer",
+                  "login"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qrs",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/dealer/qrs",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "dealer",
+                  "qrs"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qrs/send-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/dealer/qrs/send-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "dealer",
+                  "qrs",
+                  "send-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qrs/verify-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/dealer/qrs/verify-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "dealer",
+                  "qrs",
+                  "verify-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qrs/activate",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/dealer/qrs/activate",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "dealer",
+                  "qrs",
+                  "activate"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "Public APIs",
+        "item": [
+          {
+            "name": "GET /landing-data",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/landing-data",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "landing-data"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /scan-reasons",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/scan-reasons",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "scan-reasons"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /subscribe-newsletter",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/subscribe-newsletter",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "subscribe-newsletter"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /contact-inquiry",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/contact-inquiry",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "contact-inquiry"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /contact",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/contact",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "contact"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/:token",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /send-activation-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/send-activation-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "send-activation-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /verify-activation-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/verify-activation-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "verify-activation-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/claim",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/claim",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "claim"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/verify-plate",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/verify-plate",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "verify-plate"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/register",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/register",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "register"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/call",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/call",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "call"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/message",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/message",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "message"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/push-notification",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/push-notification",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "push-notification"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/:token/emergency",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/public/qr/{{token}}/emergency",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "public",
+                  "qr",
+                  "{{token}}",
+                  "emergency"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "Purchase APIs",
+        "item": [
+          {
+            "name": "GET /products",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/purchase/products",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "purchase",
+                  "products"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /products/:id",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/purchase/products/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "purchase",
+                  "products",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /send-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/purchase/send-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "purchase",
+                  "send-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /verify-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/purchase/verify-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "purchase",
+                  "verify-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /create-order",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/purchase/create-order",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "purchase",
+                  "create-order"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /complete",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/purchase/complete",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "purchase",
+                  "complete"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "User APIs",
+        "item": [
+          {
+            "name": "GET /dashboard",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/dashboard",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "dashboard"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /fcm-token",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/fcm-token",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "fcm-token"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /notifications",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/notifications",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "notifications"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /notifications/:id/read",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/notifications/{{id}}/read",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "notifications",
+                  "{{id}}",
+                  "read"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /packages",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/packages",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "packages"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /profile",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/profile",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "profile"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /profile",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/profile",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "profile"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /bank-details",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/bank-details",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "bank-details"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /bank-details",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/bank-details",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "bank-details"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /qr/activate",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/qr/activate",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "qr",
+                  "activate"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /qr/:id",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/qr/{{id}}",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "qr",
+                  "{{id}}"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /qr/:id/details",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/qr/{{id}}/details",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "qr",
+                  "{{id}}",
+                  "details"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /orders",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/orders",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "orders"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /quota/buy",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/quota/buy",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "quota",
+                  "buy"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /subscription/send-otp",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/subscription/send-otp",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "subscription",
+                  "send-otp"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /subscription/create-order",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/subscription/create-order",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "subscription",
+                  "create-order"
+                ]
+              }
+            }
+          },
+          {
+            "name": "POST /subscription/renew",
+            "request": {
+              "method": "POST",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/subscription/renew",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "subscription",
+                  "renew"
+                ]
+              }
+            }
+          },
+          {
+            "name": "PUT /emergency-contacts",
+            "request": {
+              "method": "PUT",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/emergency-contacts",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "emergency-contacts"
+                ]
+              }
+            }
+          },
+          {
+            "name": "GET /ledger",
+            "request": {
+              "method": "GET",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "url": {
+                "raw": "{{baseUrl}}/api/user/ledger",
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "path": [
+                  "api",
+                  "user",
+                  "ledger"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "variable": [
+      {
+        "key": "baseUrl",
+        "value": "http://localhost:5000",
+        "type": "string"
+      }
+    ]
+  }
+}

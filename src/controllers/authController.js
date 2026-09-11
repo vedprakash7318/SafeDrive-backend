@@ -4,6 +4,7 @@ import User from '../models/User.js';
 import Vehicle from '../models/Vehicle.js';
 import QRCode from '../models/QRCode.js';
 import QuotaWallet from '../models/QuotaWallet.js';
+import { sendPartnerWelcomeEmail, sendUserWelcomeEmail } from '../utils/emailService.js';
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET || 'supersecretjwtkey_replace_in_prod', {
@@ -13,7 +14,7 @@ const generateToken = (id) => {
 
 export const register = async (req, res) => {
   try {
-    const { name, phone, email, whatsappNumber, address, password, role } = req.body;
+    const { name, phone, email, address, password, role } = req.body;
     if (!name || !phone || !password) {
       return res.status(400).json({ success: false, message: 'Name, phone and password are required' });
     }
@@ -28,13 +29,17 @@ export const register = async (req, res) => {
       name,
       phone,
       email: email ? email.toLowerCase().trim() : undefined,
-      whatsappNumber: whatsappNumber || phone,
-      address: address || 'N/A',
+            address: address || 'N/A',
       password: hashedPassword,
       role: role || 'USER'
     });
 
     const token = generateToken(user._id);
+
+    if (user.email) {
+      await sendUserWelcomeEmail(user.email, user.name, user.phone);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Registration successful',
@@ -44,9 +49,64 @@ export const register = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        whatsappNumber: user.whatsappNumber,
         address: user.address,
         role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const registerPartner = async (req, res) => {
+  try {
+    const { name, phone, email, address, otp, shopName, city, state, pincode, landmark, gender } = req.body;
+    if (!name || !phone || !otp) {
+      return res.status(400).json({ success: false, message: 'Name, phone and OTP are required' });
+    }
+
+    if (otp.trim() !== '123456') {
+      return res.status(400).json({ success: false, message: 'Invalid OTP. Please enter 123456' });
+    }
+
+    const existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'User with this phone number already exists' });
+    }
+
+    const user = await User.create({
+      name,
+      phone,
+      email: email ? email.toLowerCase().trim() : undefined,
+      address: address || 'N/A',
+      role: 'DEALER',
+      shopName,
+      city,
+      state,
+      pincode,
+      landmark,
+      gender: gender || 'MALE',
+      isVerifiedPartner: false
+    });
+
+    const token = generateToken(user._id);
+
+    if (user.email) {
+      const partnerUrl = process.env.PARTNER_URL || 'http://localhost:5174'; 
+      await sendPartnerWelcomeEmail(user.email, user.name, user.phone, partnerUrl);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Partner Registration successful',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        isVerifiedPartner: user.isVerifiedPartner
       }
     });
   } catch (error) {
@@ -70,7 +130,7 @@ export const createAdmin = async (req, res) => {
 
     if (existingUser) {
       existingUser.name = name;
-      existingUser.role = role || 'SUPER_ADMIN';
+      existingUser.role = role || 'ADMIN';
       existingUser.password = hashedPassword;
       existingUser.status = 'ACTIVE';
       if (email) existingUser.email = email.toLowerCase().trim();
@@ -96,10 +156,9 @@ export const createAdmin = async (req, res) => {
       name,
       phone,
       email: email ? email.toLowerCase().trim() : 'admin@safedrive.com',
-      whatsappNumber: phone,
-      address: 'Safe Drive Corporate HQ',
+            address: 'Safe Drive Corporate HQ',
       password: hashedPassword,
-      role: role || 'SUPER_ADMIN',
+      role: role || 'ADMIN',
       status: 'ACTIVE'
     });
 
@@ -158,7 +217,6 @@ export const login = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        whatsappNumber: user.whatsappNumber,
         address: user.address,
         role: user.role
       }
@@ -238,11 +296,14 @@ export const verifyLoginOTP = async (req, res) => {
       user = await User.create({
         name: `User ${cleanPhone.slice(-4)}`,
         phone: cleanPhone,
-        whatsappNumber: cleanPhone,
-        role: 'USER',
+                role: 'USER',
         status: 'ACTIVE',
         address: ''
       });
+
+      if (user.email) {
+        await sendUserWelcomeEmail(user.email, user.name, user.phone);
+      }
     } else if (user.status === 'SUSPENDED') {
       return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
     }
@@ -258,7 +319,6 @@ export const verifyLoginOTP = async (req, res) => {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        whatsappNumber: user.whatsappNumber,
         address: user.address,
         role: user.role
       }
