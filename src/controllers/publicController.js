@@ -20,6 +20,8 @@ import { initiateExotelMaskedCall } from '../utils/exotel.js';
 import { sendQRActivationEmail } from '../utils/emailService.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import PhoneOTP from '../models/PhoneOTP.js';
+import { sendSMS } from '../utils/smsService.js';
 
 export const getPublicSettings = async (req, res) => {
   try {
@@ -1470,11 +1472,24 @@ export const sendActivationOTP = async (req, res) => {
       else formattedGender = 'Male';
     }
 
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Save to DB
+    await PhoneOTP.deleteMany({ phone: cleanPhone });
+    await PhoneOTP.create({
+      phone: cleanPhone,
+      otp: otp,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    });
+
+    // Send SMS
+    await sendSMS(cleanPhone, otp);
+
     res.json({
       success: true,
       message: `OTP sent to mobile +91 ${cleanPhone}`,
       phone: cleanPhone,
-      otp: '123456',
       userExists: !!existingUser || !!matchingOrder,
       user: {
         name: resolvedName,
@@ -1502,9 +1517,18 @@ export const verifyActivationOTP = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid mobile number' });
     }
 
-    if (cleanOtp !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456' });
+    const validOtpRecord = await PhoneOTP.findOne({
+      phone: cleanPhone,
+      otp: cleanOtp,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!validOtpRecord) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
     }
+
+    validOtpRecord.verified = true;
+    await validOtpRecord.save();
 
     // If QR token is passed, validate whether this phone is eligible for this QR sticker
     let matchingOrder = null;

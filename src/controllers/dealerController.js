@@ -2,6 +2,8 @@ import User from '../models/User.js';
 import QRCode from '../models/QRCode.js';
 import Vehicle from '../models/Vehicle.js';
 import EmailOTP from '../models/EmailOTP.js';
+import PhoneOTP from '../models/PhoneOTP.js';
+import { sendSMS } from '../utils/smsService.js';
 import jwt from 'jsonwebtoken';
 
 // Send Login OTP
@@ -19,13 +21,18 @@ export const sendDealerLoginOTP = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Dealer not found' });
     }
     
-    await EmailOTP.deleteMany({ email: cleanPhone });
-    await EmailOTP.create({
-      email: cleanPhone,
-      otp: '123456',
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    await PhoneOTP.deleteMany({ phone: cleanPhone });
+    await PhoneOTP.create({
+      phone: cleanPhone,
+      otp: otp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000)
     });
     
+    await sendSMS(cleanPhone, otp);
+
     res.json({ success: true, message: `OTP sent to +91 ${cleanPhone}`, phone: cleanPhone });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -44,11 +51,18 @@ export const dealerLogin = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Dealer not found or unauthorized' });
     }
 
-    if (cleanOtp !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP. Please use 123456' });
+    const validOtpRecord = await PhoneOTP.findOne({
+      phone: cleanPhone,
+      otp: cleanOtp,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!validOtpRecord) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired OTP.' });
     }
     
-    await EmailOTP.deleteMany({ email: cleanPhone });
+    validOtpRecord.verified = true;
+    await validOtpRecord.save();
 
     const token = jwt.sign(
       { id: user._id, role: user.role },
@@ -102,13 +116,18 @@ export const sendDealerOTP = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please provide a valid 10-digit mobile number' });
     }
     
-    await EmailOTP.deleteMany({ email: cleanPhone });
-    await EmailOTP.create({
-      email: cleanPhone,
-      otp: '123456',
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    await PhoneOTP.deleteMany({ phone: cleanPhone });
+    await PhoneOTP.create({
+      phone: cleanPhone,
+      otp: otp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000)
     });
     
+    await sendSMS(cleanPhone, otp);
+
     res.json({ success: true, message: `OTP sent to +91 ${cleanPhone}`, phone: cleanPhone });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -122,11 +141,19 @@ export const verifyDealerOTP = async (req, res) => {
     const cleanPhone = (phone || '').trim().replace(/\D/g, '').slice(-10);
     const cleanOtp = (otp || '').trim();
     
-    if (cleanOtp !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP. Please use 123456' });
+    const validOtpRecord = await PhoneOTP.findOne({
+      phone: cleanPhone,
+      otp: cleanOtp,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!validOtpRecord) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired OTP.' });
     }
     
-    await EmailOTP.deleteMany({ email: cleanPhone });
+    validOtpRecord.verified = true;
+    await validOtpRecord.save();
+    
     res.json({ success: true, message: 'OTP verified successfully' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

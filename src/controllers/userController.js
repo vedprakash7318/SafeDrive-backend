@@ -15,6 +15,8 @@ import ScanLog from '../models/ScanLog.js';
 import AuditLog from '../models/AuditLog.js';
 import Notification from '../models/Notification.js';
 import BankDetail from '../models/BankDetail.js';
+import PhoneOTP from '../models/PhoneOTP.js';
+import { sendSMS } from '../utils/smsService.js';
 import crypto from 'crypto';
 
 // Initialize Razorpay Instance if keys are present
@@ -305,11 +307,23 @@ export const sendRenewalOTP = async (req, res) => {
 
     const cleanPhone = user.phone.replace(/\D/g, '').slice(-10);
 
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Save to DB
+    await PhoneOTP.create({
+      phone: cleanPhone,
+      otp: otp,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    });
+
+    // Send SMS
+    await sendSMS(cleanPhone, otp);
+
     res.json({
       success: true,
       message: `Renewal OTP sent to registered number +91 ${cleanPhone.slice(0, 2)}******${cleanPhone.slice(-2)}`,
-      phone: cleanPhone,
-      otp: '123456'
+      phone: cleanPhone
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -413,9 +427,29 @@ export const renewSubscription = async (req, res) => {
     } = req.body;
 
     // Validate OTP
-    if (!otp || String(otp).trim() !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid or missing OTP code. Please enter 123456 to verify renewal.' });
+    if (!otp) {
+      return res.status(400).json({ success: false, message: 'OTP code is required to verify renewal.' });
     }
+
+    const user = await User.findById(userId);
+    if (!user || !user.phone) {
+      return res.status(400).json({ success: false, message: 'User phone not found.' });
+    }
+
+    const cleanPhone = user.phone.replace(/\D/g, '').slice(-10);
+
+    const validOtpRecord = await PhoneOTP.findOne({
+      phone: cleanPhone,
+      otp: String(otp).trim(),
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!validOtpRecord) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
+    }
+
+    validOtpRecord.verified = true;
+    await validOtpRecord.save();
 
     let qr = null;
     if (mongoose.Types.ObjectId.isValid(qrId)) {

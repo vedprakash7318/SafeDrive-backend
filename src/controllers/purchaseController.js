@@ -10,6 +10,8 @@ import Payment from '../models/Payment.js';
 import Order from '../models/Order.js';
 import QuotaWallet from '../models/QuotaWallet.js';
 import EmailOTP from '../models/EmailOTP.js';
+import PhoneOTP from '../models/PhoneOTP.js';
+import { sendSMS } from '../utils/smsService.js';
 import { calculateNextStartNumber } from './adminController.js';
 import { sendPurchaseConfirmationEmail } from '../utils/emailService.js';
 
@@ -61,24 +63,39 @@ export const sendCheckoutOTP = async (req, res) => {
     const { phone, email } = req.body;
     const target = (phone || email || '').trim();
     if (!target) {
-      return res.status(400).json({ success: false, message: 'Valid mobile number is required.' });
+      return res.status(400).json({ success: false, message: 'Valid mobile number or email is required.' });
     }
 
-    const otp = '123456';
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    const isPhone = /^\d+$/.test(target.replace(/\D/g, '')) && target.replace(/\D/g, '').length >= 10;
+    const cleanPhone = isPhone ? target.replace(/\D/g, '').slice(-10) : null;
+    
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await EmailOTP.deleteMany({ $or: [{ email: target }, { email: (email || '').toLowerCase().trim() }] });
-    await EmailOTP.create({
-      email: target,
-      otp,
-      expiresAt,
-      verified: false
-    });
+    if (isPhone) {
+      await PhoneOTP.deleteMany({ phone: cleanPhone });
+      await PhoneOTP.create({
+        phone: cleanPhone,
+        otp,
+        expiresAt,
+        verified: false
+      });
+      await sendSMS(cleanPhone, otp);
+    } else {
+      await EmailOTP.deleteMany({ email: target.toLowerCase() });
+      await EmailOTP.create({
+        email: target.toLowerCase(),
+        otp,
+        expiresAt,
+        verified: false
+      });
+      // Optionally, send email OTP here if you have an email OTP service
+    }
 
     res.json({
       success: true,
-      message: `OTP sent to ${target}. Please enter code (123456).`,
-      otp: '123456'
+      message: `OTP sent to ${target}.`
     });
   } catch (error) {
     console.error('Send OTP error:', error);
@@ -97,21 +114,20 @@ export const verifyCheckoutOTP = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Mobile number and OTP are required.' });
     }
 
-    const trimmedOtp = otp.trim();
-    if (trimmedOtp === '123456') {
-      await EmailOTP.deleteMany({ email: target });
-      await EmailOTP.create({
-        email: target,
-        otp: '123456',
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-        verified: true
-      });
-      return res.json({ success: true, message: 'Mobile verified successfully.' });
+    const trimmedOtp = String(otp).trim();
+    const isPhone = /^\d+$/.test(target.replace(/\D/g, '')) && target.replace(/\D/g, '').length >= 10;
+    const cleanPhone = isPhone ? target.replace(/\D/g, '').slice(-10) : null;
+
+    let record = null;
+    
+    if (isPhone) {
+      record = await PhoneOTP.findOne({ phone: cleanPhone, otp: trimmedOtp });
+    } else {
+      record = await EmailOTP.findOne({ email: target.toLowerCase(), otp: trimmedOtp });
     }
 
-    const record = await EmailOTP.findOne({ email: target, otp: trimmedOtp });
     if (!record) {
-      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456' });
+      return res.status(400).json({ success: false, message: 'Invalid OTP code.' });
     }
 
     if (new Date() > record.expiresAt) {
@@ -237,13 +253,17 @@ export const verifyAndAllocateQR = async (req, res) => {
     }
 
     // 1. Verify OTP was confirmed (via phone or email)
-    const otpRecord = await EmailOTP.findOne({
-      $or: [{ email: cleanPhone }, { email: cleanEmail }, { email: cleanActivationPhone }],
+    const emailOtpRecord = await EmailOTP.findOne({
+      $or: [{ email: cleanEmail }],
       verified: true
     });
-    // In test / simulated mode or if verified, allow order creation
-    if (!otpRecord && cleanPhone) {
-      await EmailOTP.create({ email: cleanPhone, otp: '123456', expiresAt: new Date(Date.now() + 3600000), verified: true });
+    const phoneOtpRecord = await PhoneOTP.findOne({
+      $or: [{ phone: cleanPhone }, { phone: cleanActivationPhone }],
+      verified: true
+    });
+    
+    if (!emailOtpRecord && !phoneOtpRecord) {
+      return res.status(400).json({ success: false, message: 'OTP verification is required before placing an order.' });
     }
 
     // 2. Verify Razorpay Signature if in Live Mode and valid signature passed (Skip for COD)
