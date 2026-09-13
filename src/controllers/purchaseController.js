@@ -527,10 +527,10 @@ export const verifyAndAllocateQR = async (req, res) => {
         cleanEmail,
         user,
         {
-          orderNumber: generatedOrderNumber,
+          orderId: generatedOrderNumber,
           productName,
           amount: finalAmount,
-          quantity,
+          copiesPerSet: quantity,
           paymentMethod: isCOD ? 'COD' : 'ONLINE'
         },
         allocatedQRs.map(q => q.copyCode)

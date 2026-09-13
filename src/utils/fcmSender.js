@@ -1,4 +1,5 @@
-import admin from 'firebase-admin';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import User from '../models/User.js';
@@ -8,11 +9,11 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin SDK
 try {
-  if (!admin.apps.length) {
+  if (!getApps().length) {
     // Look for firebase-admin.json at the backend root
     const serviceAccountPath = path.join(__dirname, '..', '..', 'firebase-admin.json');
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccountPath),
+    initializeApp({
+      credential: cert(serviceAccountPath),
     });
     console.log('Firebase Admin SDK initialized successfully for FCM v1.');
   }
@@ -26,7 +27,7 @@ try {
  */
 export const sendFCMNotificationToUser = async (userId, payload) => {
   try {
-    if (!userId || !admin.apps.length) return;
+    if (!userId || !getApps().length) return;
     
     const user = await User.findById(userId);
     if (!user || !user.fcmTokens || user.fcmTokens.length === 0) {
@@ -58,7 +59,7 @@ export const sendFCMNotificationToUser = async (userId, payload) => {
       };
 
       try {
-        const response = await admin.messaging().sendEachForMulticast(message);
+        const response = await getMessaging().sendEachForMulticast(message);
         console.log(`FCM Sent. Success: ${response.successCount}, Failed: ${response.failureCount}`);
         
         // Remove invalid tokens if any failures occurred
