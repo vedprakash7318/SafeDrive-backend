@@ -44,7 +44,16 @@ export const getStoreProducts = async (req, res) => {
 export const getStoreProductById = async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await Product.findOne({ _id: id, isDeleted: { $ne: true } });
+    let query = { isDeleted: { $ne: true } };
+    
+    // Check if id is a valid MongoDB ObjectId
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      query.$or = [{ _id: id }, { slug: id }];
+    } else {
+      query.slug = id;
+    }
+
+    const product = await Product.findOne(query);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found or unavailable' });
     }

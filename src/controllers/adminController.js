@@ -1960,6 +1960,7 @@ export const createAdminProduct = async (req, res) => {
       initialMessages = 20,
       validityDays = 365,
       renewalAmount = 199,
+      slug,
       features
     } = req.body;
 
@@ -1976,6 +1977,7 @@ export const createAdminProduct = async (req, res) => {
     const product = await Product.create({
       name: prodTitle,
       title: prodTitle,
+      slug: slug ? slug.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : undefined,
       description: description.trim(),
       imageUrl: imageUrl || '',
       imagePublicId: imagePublicId || '',
@@ -2013,6 +2015,9 @@ export const updateAdminProduct = async (req, res) => {
       const prodTitle = (updates.title || updates.name).trim();
       updates.name = prodTitle;
       updates.title = prodTitle;
+    }
+    if (updates.slug) {
+      updates.slug = updates.slug.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
     }
     if (updates.price !== undefined) updates.price = Number(updates.price);
     if (updates.originalPrice !== undefined) updates.originalPrice = Number(updates.originalPrice);
@@ -3456,8 +3461,8 @@ export const getFaqs = async (req, res) => {
 
 export const createFaq = async (req, res) => {
   try {
-    const { question, answer, isActive, order } = req.body;
-    const faq = new FAQ({ question, answer, isActive, order });
+    const { question, answer, isActive, showOnHome, order } = req.body;
+    const faq = new FAQ({ question, answer, isActive, showOnHome, order });
     await faq.save();
     res.status(201).json({ success: true, faq });
   } catch (error) {
@@ -3467,10 +3472,10 @@ export const createFaq = async (req, res) => {
 
 export const updateFaq = async (req, res) => {
   try {
-    const { question, answer, isActive, order } = req.body;
+    const { question, answer, isActive, showOnHome, order } = req.body;
     const faq = await FAQ.findByIdAndUpdate(
       req.params.id,
-      { question, answer, isActive, order },
+      { question, answer, isActive, showOnHome, order },
       { new: true }
     );
     if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });

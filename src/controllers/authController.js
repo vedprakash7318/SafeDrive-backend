@@ -31,7 +31,7 @@ export const register = async (req, res) => {
       name,
       phone,
       email: email ? email.toLowerCase().trim() : undefined,
-            address: address || 'N/A',
+      address: address || 'N/A',
       password: hashedPassword,
       role: role || 'USER'
     });
@@ -103,7 +103,7 @@ export const registerPartner = async (req, res) => {
     const token = generateToken(user._id);
 
     if (user.email) {
-      const partnerUrl = process.env.PARTNER_URL || 'http://localhost:5174'; 
+      const partnerUrl = process.env.PARTNER_URL || 'http://localhost:5174';
       await sendPartnerWelcomeEmail(user.email, user.name, user.phone, partnerUrl);
     }
 
@@ -167,7 +167,7 @@ export const createAdmin = async (req, res) => {
       name,
       phone,
       email: email ? email.toLowerCase().trim() : 'admin@safedrive.com',
-            address: 'Safe Drive Corporate HQ',
+      address: 'Safe Drive Corporate HQ',
       password: hashedPassword,
       role: role || 'ADMIN',
       status: 'ACTIVE'
@@ -262,9 +262,13 @@ export const sendLoginOTP = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
     }
 
+    if (user && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN')) {
+      return res.status(403).json({ success: false, message: 'User Not Allowed to login Contact to support Team' });
+    }
+
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    
+
     // Save to DB (expires in 10 minutes)
     await PhoneOTP.create({
       phone: cleanPhone,
@@ -328,7 +332,7 @@ export const verifyLoginOTP = async (req, res) => {
       user = await User.create({
         name: `User ${cleanPhone.slice(-4)}`,
         phone: cleanPhone,
-                role: 'USER',
+        role: 'USER',
         status: 'ACTIVE',
         address: ''
       });
@@ -338,6 +342,8 @@ export const verifyLoginOTP = async (req, res) => {
       }
     } else if (user.status === 'SUSPENDED') {
       return res.status(403).json({ success: false, message: 'Your account is suspended. Please contact support.' });
+    } else if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ success: false, message: 'Admin login is not allowed from this portal.' });
     }
 
     const token = generateToken(user._id);

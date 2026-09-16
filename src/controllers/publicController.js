@@ -46,7 +46,12 @@ export const getPublicSettings = async (req, res) => {
 
 export const getPublicFaqs = async (req, res) => {
   try {
-    const faqs = await FAQ.find({ isActive: true }).sort({ createdAt: -1 });
+    const { home } = req.query;
+    const query = { isActive: true };
+    if (home === 'true') {
+      query.showOnHome = true;
+    }
+    const faqs = await FAQ.find(query).sort({ order: 1, createdAt: -1 });
     res.status(200).json({ success: true, faqs });
   } catch (error) {
     console.error('Error fetching public FAQs:', error);
@@ -818,6 +823,13 @@ export const initiateCall = async (req, res) => {
 
     const isExotelSuccess = exotelResponse && exotelResponse.success;
 
+    if (!isExotelSuccess) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to initiate secure masked call. Please try again later or use the messaging feature.'
+      });
+    }
+
     // Atomic server-side quota deduction
     const updatedWallet = await QuotaWallet.findOneAndUpdate(
       { qrId: qr._id, callBalance: { $gt: 0 } },
@@ -887,10 +899,7 @@ export const initiateCall = async (req, res) => {
       masked: isExotelSuccess,
       callSid: exotelResponse?.callSid,
       provider: isExotelSuccess ? 'EXOTEL' : 'DIRECT',
-      message: isExotelSuccess
-        ? '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.'
-        : '📞 Call connection initiated.',
-      targetPhone: targetOwnerPhone,
+      message: '📞 Masked Call Initiated! Exotel is connecting your phone. Please answer the incoming call to speak with the owner securely.',
       cooldownSeconds: cooldownSeconds,
       remainingCalls: updatedWallet ? updatedWallet.callBalance : wallet.callBalance
     });

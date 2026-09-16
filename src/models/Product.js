@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true }, // Product Title / Name
   title: { type: String, trim: true }, // Alias for name
+  slug: { type: String, unique: true, sparse: true, trim: true }, // URL slug
   description: { type: String, default: '' },
   price: { type: Number, required: true, min: 0 }, // Selling / Discounted Price (₹)
   originalPrice: { type: Number, default: 0, min: 0 }, // Original MRP (₹)
